@@ -1,0 +1,5 @@
+{
+  "name": "vba-house-style",
+  "version": "1.0.0",
+  "description": "Format, write or review exported VBA source (.bas, .cls, .frm) in a fixed house style."
+}
