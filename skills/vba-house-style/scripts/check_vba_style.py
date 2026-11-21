@@ -86,6 +86,14 @@ BLOCK_RE = re.compile(r"^(?:(?:Public|Private)\s+)?(Enum|Type)\s+(\w+)", re.I)
 AS_TYPE_RE = re.compile(r"\bAs\s+(?:New\s+)?(\w+)", re.I)
 SCALAR_TYPES = {"string", "variant", "long", "integer", "double", "single", "currency",
                 "date", "boolean", "byte", "longlong", "longptr", "decimal"}
+SELECT_RE = re.compile(r"Select\s+Case\b", re.I)
+CASE_ELSE_RE = re.compile(r"Case\s+Else\b", re.I)
+END_SELECT_RE = re.compile(r"End\s+Select\b", re.I)
+LOCAL_VAR_RE = re.compile(r"(?:Dim|Static)\s+(.*)$", re.I)
+# Hungarian prefix: a lower-case type tag followed by an upper-case letter
+# (strName, wsData). Case-sensitive, so Strength and Intent are words.
+HUNGARIAN_RE = re.compile(r"(str|lng|int|obj|bln|dbl|var|rng|ws|wb)[A-Z]")
+PASCAL_RE = re.compile(r"[A-Z][A-Za-z0-9]*$")
 
 
 def code_start(lines: list[str]) -> int:
@@ -591,6 +599,48 @@ def unqualified_calls(code: str, declared: set[str],
     return found
 
 
+def block_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Select Case blocks without Case Else, and local variables (Dim or
+    Static inside a procedure) with a Hungarian prefix or a name that is not
+    PascalCase, as (line number, message). Module-level variables,
+    constants and parameters are not local variables."""
+    out: list[tuple[int, str]] = []
+    selects: list[list] = []        # [line number, has Case Else] per open block
+    in_proc = False
+    for n, code in statements:
+        # One entry per statement: split at ":" (not ":="; strings are masked).
+        for part in re.split(r":(?!=)", code):
+            part = part.strip()
+            if not part:
+                continue
+            if PROC_RE.match(part):
+                in_proc = True
+            elif END_RE.match(part):
+                in_proc = False
+            if SELECT_RE.match(part):
+                selects.append([n, False])
+            elif CASE_ELSE_RE.match(part) and selects:
+                selects[-1][1] = True
+            elif END_SELECT_RE.match(part) and selects:
+                line_no, has_else = selects.pop()
+                if not has_else:
+                    out.append((line_no, "Select Case without Case Else"))
+            m = LOCAL_VAR_RE.match(part) if in_proc else None
+            if m:
+                for decl in split_args(m.group(1)):
+                    name = re.match(r"\s*(?:WithEvents\s+)?([A-Za-z]\w*)", decl, re.I)
+                    if not name:
+                        continue
+                    name = name.group(1)
+                    prefix = HUNGARIAN_RE.match(name)
+                    if prefix:
+                        out.append((n, f"local variable {name} has a Hungarian prefix "
+                                       f"({prefix.group(1)})"))
+                    elif not PASCAL_RE.match(name):
+                        out.append((n, f"local variable {name} is not PascalCase"))
+    return sorted(out)
+
+
 def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str]]:
     """Statement-level conventions (SKILL.md section 7), as WARN findings."""
     out: list[tuple[str, int, str]] = []
@@ -625,6 +675,7 @@ def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str
         if m:
             for problem in signature_problems(code, m):
                 out.append(("WARN", n, f"{m.group(2)}: {problem}"))
+    out += [("WARN", n, msg) for n, msg in block_findings(statements)]
     return out
 
 

@@ -21,6 +21,12 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   names the file declares, the `Mid$` statement, the `Len =` clause of `Open`
   and `Len` / `LenB` of a user-defined type, an object or a `With` member
   (`Item.Inner`, `.Inner`) are not reported. No `--fix`.
+- Checker: WARN for a `Select Case` without `Case Else` (nested blocks
+  matched to their own `End Select`) and for a local variable (`Dim` or
+  `Static` inside a procedure) with a Hungarian prefix (`strName`, `wsData`)
+  or a name that is not PascalCase (#9). Module-level variables, constants
+  and parameters are not checked; `Strength` and `Intent` are not reported.
+  No `--fix`.
 
 ### Changed
 
