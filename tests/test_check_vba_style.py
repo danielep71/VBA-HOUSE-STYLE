@@ -40,6 +40,17 @@ def module(name: str, body: list[str], component: list[str] | None = None) -> st
     return "\r\n".join(lines) + "\r\n"
 
 
+DECLARE = ("DECLARE", [
+    '    Const PROC_NAME             As String = "M_Test.M_Test_Run"', "",
+    "    Dim Count                   As Long         'Counter"])
+INIT = ("INITIALIZE", ["    'Enable controlled error handling",
+                       "        On Error GoTo ErrorHandler"])
+TASK = ("DO WORK", ["    'Count once", "        Debug.Print 1"])
+EXIT = ("EXIT PROCEDURE", ["    'Exit before the error handler", "        Exit Sub"])
+HANDLER = ("ERROR HANDLER", ["ErrorHandler:", "    'Raise a descriptive error",
+                             "        Err.Raise Err.Number, PROC_NAME, Err.Description"])
+
+
 def procedure(signature: str, fields: list[str], code_lines: int = 1) -> list[str]:
     title = "'" + " " * 35 + "DO WORK"
     code = ["        Debug.Print 1"] * code_lines
@@ -287,6 +298,116 @@ class CheckerTest(unittest.TestCase):
 
     def test_statement_findings_do_not_change_errors(self) -> None:
         findings = self.statements("Next", "A = 1: B = 2")
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Body sections.
+    def sections(self, *parts: tuple[str, list[str]],
+                 signature: str = "Public Sub M_Test_Run()",
+                 title: str = "'" + " " * 35 + "DO WORK", blank: bool = True) -> list[str]:
+        proc = [signature, ""] + header(cvs.FIELDS, title) + ([""] if blank else [])
+        for name, code in parts:
+            proc += [BANNER, f"' {name}", BANNER] + code + [""]
+        end = "End Function" if " Function " in signature else "End Sub"
+        return self.run_check(module("M_Test", proc + [end]))
+
+    def test_full_body_layout_is_silent(self) -> None:
+        self.assertEqual(self.sections(DECLARE, INIT, TASK, EXIT, HANDLER), [])
+
+    def test_declare_without_error_handler_is_silent(self) -> None:
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_task_sections_only_are_silent(self) -> None:
+        self.assertEqual(self.sections(TASK, ("RETURN VALUE", ["        Debug.Print 2"])), [])
+
+    def test_one_line_getter_is_exempt(self) -> None:
+        findings = self.run_check(module("M_Test", procedure(
+            "Public Function M_Test_Get() As Long", cvs.FIELDS)[:-1] + ["End Function"]))
+        self.assertEqual(findings, [])
+
+    def test_compact_private_is_exempt(self) -> None:
+        proc = procedure("Private Sub M_Test_Run()", ["PURPOSE", "UPDATED"])
+        code = ["    Dim Count As Long", "    On Error GoTo Fail", "        Count = 1",
+                "        Exit Sub", "Fail:", "        Count = 0"]
+        self.assertEqual(self.run_check(module("M_Test", proc[:-3] + code + proc[-2:])), [])
+
+    def test_left_aligned_procedure_title_is_not_a_section(self) -> None:
+        findings = self.sections(DECLARE, TASK, title="' DO WORK")
+        self.assertNoFinding(findings, "out of order")
+        self.assertNoFinding(findings, "DECLARE does not")
+
+    def test_section_directly_after_the_header_is_found(self) -> None:
+        findings = self.sections(("DO WORK", ["    Dim Count As Long", "        Count = 1"]),
+                                 blank=False)
+        self.assertFinding(findings, "no DECLARE section")
+        findings = self.sections(DECLARE, TASK, blank=False)
+        self.assertEqual(findings, [])
+
+    def test_local_variables_without_declare_warn(self) -> None:
+        findings = self.sections(("DO WORK", ["    Dim Count As Long", "        Count = 1"]))
+        self.assertFinding(findings, "M_Test_Run: no DECLARE section")
+
+    def test_error_handler_without_declare_warns(self) -> None:
+        findings = self.sections(INIT, TASK, EXIT, HANDLER)
+        self.assertFinding(findings, "no DECLARE section for local variables or error handler")
+
+    def test_declare_must_start_with_proc_name(self) -> None:
+        declare = ("DECLARE", DECLARE[1][2:] + ["", DECLARE[1][0]])
+        findings = self.sections(declare, TASK)
+        self.assertFinding(findings, "DECLARE does not start with Const PROC_NAME As String")
+
+    def test_proc_name_must_match_component_and_procedure(self) -> None:
+        declare = ("DECLARE", [DECLARE[1][0].replace("M_Test_Run", "M_Test_Old")])
+        findings = self.sections(declare, TASK)
+        self.assertFinding(findings, 'PROC_NAME is "M_Test.M_Test_Old", expected "M_Test.M_Test_Run"')
+
+    def test_proc_name_on_a_continuation_line_is_read(self) -> None:
+        split = ["    Const PROC_NAME As String = _", '        "M_Test.M_Test_Old"']
+        findings = self.sections(("DECLARE", split), TASK)
+        self.assertFinding(findings, 'PROC_NAME is "M_Test.M_Test_Old"')
+        split[1] = '        "M_Test.M_Test_Run"'
+        self.assertEqual(self.sections(("DECLARE", split), TASK), [])
+
+    def test_on_error_outside_initialize_warns(self) -> None:
+        task = ("DO WORK", INIT[1] + TASK[1])
+        findings = self.sections(DECLARE, task, EXIT, HANDLER)
+        self.assertFinding(findings, "On Error GoTo ErrorHandler is not in INITIALIZE")
+
+    def test_later_on_error_goto_outside_initialize_is_silent(self) -> None:
+        task = ("DO WORK", ["        On Error Resume Next", "        Count = 1",
+                            "        On Error GoTo ErrorHandler"])
+        self.assertEqual(self.sections(DECLARE, INIT, task, EXIT, HANDLER), [])
+
+    def test_indented_error_label_warns(self) -> None:
+        handler = ("ERROR HANDLER", ["    ErrorHandler:"] + HANDLER[1][1:])
+        findings = self.sections(DECLARE, INIT, TASK, EXIT, handler)
+        self.assertFinding(findings, "label ErrorHandler: is not at column 0")
+
+    def test_section_out_of_order_warns(self) -> None:
+        findings = self.sections(DECLARE, TASK, INIT, EXIT, HANDLER)
+        self.assertFinding(findings, "section INITIALIZE is out of order (after DO WORK)")
+
+    def test_error_handler_not_last_warns(self) -> None:
+        findings = self.sections(DECLARE, INIT, TASK, HANDLER, EXIT)
+        self.assertFinding(findings, "section EXIT PROCEDURE is out of order (after ERROR HANDLER)")
+
+    def test_missing_clean_exit_warns(self) -> None:
+        findings = self.sections(DECLARE, INIT, TASK, HANDLER)
+        self.assertFinding(findings, "no Exit Sub in EXIT PROCEDURE before ErrorHandler:")
+
+    def test_clean_exit_names_the_procedure_kind(self) -> None:
+        declare = ("DECLARE", [DECLARE[1][0].replace("M_Test_Run", "M_Test_Get")])
+        findings = self.sections(declare, INIT, TASK, HANDLER,
+                                 signature="Public Function M_Test_Get() As Long")
+        self.assertFinding(findings, "no Exit Function in EXIT PROCEDURE")
+
+    def test_exit_outside_exit_procedure_warns(self) -> None:
+        task = ("DO WORK", TASK[1] + ["        Exit Sub"])
+        findings = self.sections(DECLARE, INIT, task, HANDLER)
+        self.assertFinding(findings, "no Exit Sub in EXIT PROCEDURE")
+
+    def test_body_findings_do_not_change_errors(self) -> None:
+        findings = self.sections(TASK, INIT, HANDLER)
+        self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
     # Tokenizer.

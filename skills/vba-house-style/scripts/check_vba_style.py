@@ -51,6 +51,16 @@ PARAM_RE = re.compile(
     r"^(?:Optional\s+)?(?:ByVal|ByRef)\s+\w+(?:\(\s*\))?\s+As\s+\S", re.I)
 COMPACT_MAX = 15        # body lines up to which a Private procedure may be compact
 COMPACT_FIELDS = ["PURPOSE", "UPDATED"]
+TRIVIAL_MAX = 1         # body lines up to which a procedure is trivial (one-line getter)
+# Body sections (SKILL.md section 6): standard ones have a fixed rank, task
+# sections sit between INITIALIZE and EXIT PROCEDURE.
+SECTION_RANK = {"DECLARE": 0, "INITIALIZE": 1, "EXIT PROCEDURE": 3, "ERROR HANDLER": 4}
+TASK_RANK = 2
+LOCAL_DIM_RE = re.compile(r"\s*(?:Dim|Static)\s+\w", re.I)
+PROC_NAME_RE = re.compile(r'\s*Const\s+PROC_NAME\s+As\s+String\s*=\s*"[^"]*"\s*$', re.I)
+ON_ERROR_GOTO_RE = re.compile(r"\s*On\s+Error\s+GoTo\s+([A-Za-z]\w*)\s*$", re.I)
+LABEL_AT_RE = re.compile(r"(\s*)([A-Za-z]\w*):(?!=)")
+EXIT_PROC_RE = re.compile(r"\s*Exit\s+(?:Sub|Function|Property)\s*$", re.I)
 
 
 def code_start(lines: list[str]) -> int:
@@ -169,6 +179,89 @@ def field_problems(labels: list[str], required: list[str]) -> list[str]:
     return problems
 
 
+def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, int]]:
+    """(title, index of the title line) of each section banner in
+    lines[first:last]: an UPPERCASE title after one space, between two banner
+    lines. Header fields and the centered title are not sections."""
+    out = []
+    for n in range(max(first + 1, 1), last - 1):
+        line = lines[n]
+        title = line[2:].strip()
+        if line.startswith("' ") and not line.startswith("'  ") and title \
+                and title == title.upper() and re.search("[A-Z]", title) \
+                and BANNER_RE.match(lines[n - 1]) and BANNER_RE.match(lines[n + 1]):
+            out.append((title, n))
+    return out
+
+
+def body_problems(lines: list[str], stmts: list[tuple[int, str]], first: int,
+                  last: int, proc_name: str, kind: str) -> list[tuple[int, str]]:
+    """Layout problems of one procedure body (SKILL.md section 6), as
+    (line number, message). stmts holds the (line index, code) of each
+    statement in lines[first:last]."""
+    problems: list[tuple[int, str]] = []
+    sections = body_sections(lines, first, last)
+
+    def section_at(idx: int) -> str | None:
+        title = None
+        for name, at in sections:
+            if at >= idx:
+                break
+            title = name
+        return title
+
+    # Order: DECLARE, INITIALIZE, task sections, EXIT PROCEDURE, ERROR HANDLER.
+    prev, prev_rank = "", -1
+    for title, at in sections:
+        rank = SECTION_RANK.get(title, TASK_RANK)
+        if rank < prev_rank:
+            problems.append((at + 1, f"section {title} is out of order (after {prev})"))
+            break
+        prev, prev_rank = title, rank
+
+    # DECLARE starts with PROC_NAME; needed for local variables or an error handler.
+    handlers = [(idx, m.group(1)) for idx, code in stmts
+                if (m := ON_ERROR_GOTO_RE.match(code))]
+    declare = next((at for title, at in sections if title == "DECLARE"), None)
+    if declare is not None:
+        idx, code = next(((i, c) for i, c in stmts if i > declare), (declare, ""))
+        if section_at(idx) != "DECLARE" or not PROC_NAME_RE.match(code):
+            problems.append((idx + 1, "DECLARE does not start with Const PROC_NAME As String"))
+        else:
+            n = idx
+            while lines[n].rstrip().endswith(" _") and n + 1 < last:
+                n += 1
+            value = next((t[1:-1] for line in lines[idx:n + 1]
+                          for k, t in tokenize(line) if k == STRING), proc_name)
+            if value.lower() != proc_name.lower():
+                problems.append((idx + 1, f'PROC_NAME is "{value}", expected "{proc_name}"'))
+    else:
+        need = next((i for i, c in stmts if LOCAL_DIM_RE.match(c)), None)
+        if need is None and handlers:
+            need = handlers[0][0]
+        if need is not None:
+            problems.append((need + 1, "no DECLARE section for local variables or error handler"))
+
+    # On Error GoTo <label> in INITIALIZE; the label at column 0; the clean
+    # exit in EXIT PROCEDURE before the label.
+    if handlers:
+        idx, label = handlers[0]
+        if section_at(idx) != "INITIALIZE":
+            problems.append((idx + 1, f"On Error GoTo {label} is not in INITIALIZE"))
+        label_at = next((i for i, c in stmts if (m := LABEL_AT_RE.match(c))
+                         and m.group(2).lower() == label.lower()), None)
+        if label_at is None:
+            problems.append((idx + 1, f"label {label}: not found"))
+        else:
+            if lines[label_at][:1].isspace():
+                problems.append((label_at + 1, f"label {label}: is not at column 0"))
+            if not any(EXIT_PROC_RE.match(c) and section_at(i) == "EXIT PROCEDURE"
+                       for i, c in stmts if i < label_at):
+                problems.append((label_at + 1,
+                                 f"no Exit {kind} in EXIT PROCEDURE before {label}:"))
+    return problems
+
+
 def fix(raw: bytes) -> bytes:
     text = raw.decode("latin-1").replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
@@ -231,7 +324,10 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         for msg in field_problems(labels, FIELDS):
             add("WARN", top + 1, f"component {msg}")
 
-    # Procedures: header fields in order, spacing between procedures.
+    # Procedures: header fields in order, spacing between procedures, body
+    # sections.
+    component = names[0] if names else path.stem
+    statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
     i = start
     while i < len(lines):
         m = PROC_RE.match(lines[i])
@@ -265,6 +361,18 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
+        if not compact and body > TRIVIAL_MAX:
+            stmts = [(n, statements[n]) for n in range(k + 1, end) if n in statements]
+            kind = m.group(1).split()[0].capitalize()
+            # Sections start after the banner that closes the header, so the
+            # procedure title is never read as a section.
+            first = k + 1
+            updated = next((n for n in range(k + 1, end) if lines[n].rstrip() == "' UPDATED"), None)
+            if updated is not None:
+                first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
+            for line_no, msg in body_problems(lines, stmts, first, end,
+                                              f"{component}.{name}", kind):
+                add("WARN", line_no, f"{name}: {msg}")
         i = end + 1
     out += statement_findings(lines, start)
     return out

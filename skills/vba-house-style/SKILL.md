@@ -24,7 +24,11 @@ ones.
    warns on statement-level slips: `Next` without its counter, `:` between
    statements, `InStr` / `StrComp` without a compare mode, parameters
    without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
-   where `vbNullString` is expected.
+   where `vbNullString` is expected. It also checks the body sections of
+   section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
+   in `INITIALIZE`, the error label at column 0, the section order, and the
+   clean exit in `EXIT PROCEDURE` before the label. One-line procedures and
+   compact `Private` procedures are exempt.
 3. Reformat by hand following the rules below. Formatting is **behavior
    preserving**: never rename public members, change signatures, reorder
    `Attribute` lines, alter string literals, or change logic. If a rule would
