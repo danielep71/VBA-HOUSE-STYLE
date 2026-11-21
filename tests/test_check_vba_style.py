@@ -1,0 +1,183 @@
+"""Tests for skills/vba-house-style/scripts/check_vba_style.py (stdlib only).
+
+Run from the repository root:
+    python -m unittest discover -s tests
+"""
+from __future__ import annotations
+
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SKILL = ROOT / "skills" / "vba-house-style"
+spec = importlib.util.spec_from_file_location(
+    "check_vba_style", SKILL / "scripts" / "check_vba_style.py")
+cvs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cvs)
+
+BANNER = "'" + "-" * 78
+FIELD_TEXT = {f: "None" for f in cvs.FIELDS}
+FIELD_TEXT["UPDATED"] = "2026-01-15"
+
+
+def header(fields: list[str], title: str | None = None) -> list[str]:
+    """A header block with the given labels, each followed by its text."""
+    out = ["'", BANNER]
+    if title:
+        out += [title, BANNER]
+    for n, field in enumerate(fields):
+        if n:
+            out.append("'")
+        out += [f"' {field}", f"'   {FIELD_TEXT.get(field, 'Text')}"]
+    return out + [BANNER]
+
+
+def module(name: str, body: list[str], component: list[str] | None = None) -> str:
+    comp = component if component is not None else header(cvs.FIELDS, f"' MODULE: {name}")
+    lines = [f'Attribute VB_Name = "{name}"', "", "Option Explicit", ""] + comp + [""] + body
+    return "\r\n".join(lines) + "\r\n"
+
+
+def procedure(signature: str, fields: list[str], code_lines: int = 1) -> list[str]:
+    title = "'" + " " * 35 + "DO WORK"
+    code = ["        Debug.Print 1"] * code_lines
+    return [signature, ""] + header(fields, title) + [""] + code + ["", "End Sub"]
+
+
+class CheckerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_check(self, text: str, name: str = "M_Test", suffix: str = ".bas",
+                  raw: bytes | None = None) -> list[str]:
+        path = self.dir / f"{name}{suffix}"
+        path.write_bytes(raw if raw is not None else text.encode("latin-1"))
+        return [f"{level} {msg}" for level, _, msg in cvs.check(path, 120)]
+
+    def assertFinding(self, findings: list[str], fragment: str) -> None:
+        self.assertTrue(any(fragment in f for f in findings),
+                        f"{fragment!r} not in {findings}")
+
+    def assertNoFinding(self, findings: list[str], fragment: str) -> None:
+        self.assertFalse(any(fragment in f for f in findings),
+                         f"{fragment!r} unexpectedly in {findings}")
+
+    # The worked example is the reference: it must stay clean.
+    def test_example_is_clean(self) -> None:
+        path = SKILL / "references" / "M_Example.bas"
+        self.assertEqual(cvs.check(path, 120), [])
+
+    def test_clean_module(self) -> None:
+        body = procedure("Public Sub M_Test_Run()", cvs.FIELDS)
+        self.assertEqual(self.run_check(module("M_Test", body)), [])
+
+    # Mechanical errors.
+    def test_lf_line_endings(self) -> None:
+        text = module("M_Test", []).replace("\r\n", "\n")
+        self.assertFinding(self.run_check(text), "ERROR line endings are not all CRLF")
+
+    def test_missing_final_crlf(self) -> None:
+        text = module("M_Test", ["    'Last line"])[:-2]
+        self.assertFinding(self.run_check(text), "ERROR file does not end with CRLF")
+
+    def test_vb_name_mismatch(self) -> None:
+        self.assertFinding(self.run_check(module("M_Other", [])), "ERROR VB_Name")
+
+    def test_missing_option_explicit(self) -> None:
+        text = module("M_Test", []).replace("Option Explicit", "")
+        self.assertFinding(self.run_check(text), "ERROR missing Option Explicit")
+
+    def test_tab_and_trailing_whitespace(self) -> None:
+        findings = self.run_check(module("M_Test", ["\tDim A As Long  "]))
+        self.assertFinding(findings, "ERROR tab character")
+        self.assertFinding(findings, "ERROR trailing whitespace")
+
+    def test_short_banner(self) -> None:
+        findings = self.run_check(module("M_Test", ["'" + "-" * 70]))
+        self.assertFinding(findings, "ERROR banner is 71 chars, expected 79")
+
+    # Headers.
+    def test_missing_component_header(self) -> None:
+        findings = self.run_check(module("M_Test", [], component=["' M_Test"]))
+        self.assertFinding(findings, "no ' MODULE: / ' CLASS: component header")
+
+    def test_component_header_missing_field(self) -> None:
+        comp = header([f for f in cvs.FIELDS if f != "NOTES"], "' MODULE: M_Test")
+        findings = self.run_check(module("M_Test", [], component=comp))
+        self.assertFinding(findings, "component header missing NOTES")
+
+    def test_public_needs_all_nine(self) -> None:
+        body = procedure("Public Sub M_Test_Run()", ["PURPOSE", "UPDATED"])
+        self.assertFinding(self.run_check(module("M_Test", body)), "M_Test_Run: header missing")
+
+    def test_small_private_may_be_compact(self) -> None:
+        body = procedure("Private Sub M_Test_Run()", ["PURPOSE", "UPDATED"], code_lines=15)
+        self.assertEqual(self.run_check(module("M_Test", body)), [])
+
+    def test_compact_still_needs_purpose_and_updated(self) -> None:
+        body = procedure("Private Sub M_Test_Run()", ["PURPOSE"])
+        self.assertFinding(self.run_check(module("M_Test", body)), "header missing UPDATED")
+
+    def test_large_private_needs_all_nine(self) -> None:
+        body = procedure("Private Sub M_Test_Run()", ["PURPOSE", "UPDATED"], code_lines=16)
+        self.assertFinding(self.run_check(module("M_Test", body)), "header missing WHY THIS EXISTS")
+
+    def test_fields_out_of_order(self) -> None:
+        fields = list(cvs.FIELDS)
+        fields[0], fields[1] = fields[1], fields[0]
+        body = procedure("Public Sub M_Test_Run()", fields)
+        self.assertFinding(self.run_check(module("M_Test", body)), "header fields out of order")
+
+    def test_extra_section_before_updated(self) -> None:
+        fields = cvs.FIELDS[:-1] + ["PUBLIC SURFACE", "UPDATED"]
+        comp = header(fields, "' MODULE: M_Test")
+        self.assertEqual(self.run_check(module("M_Test", [], component=comp)), [])
+
+    def test_extra_section_too_early(self) -> None:
+        fields = ["PUBLIC SURFACE"] + cvs.FIELDS
+        comp = header(fields, "' MODULE: M_Test")
+        findings = self.run_check(module("M_Test", [], component=comp))
+        self.assertFinding(findings, "extra section PUBLIC SURFACE must follow NOTES")
+
+    def test_blank_lines_between_procedures(self) -> None:
+        first = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        second = procedure("Public Sub M_Test_B()", cvs.FIELDS)
+        findings = self.run_check(module("M_Test", first + ["", ""] + second))
+        self.assertFinding(findings, "M_Test_B: 2 blank lines after previous End, expected 1")
+
+    # Line length.
+    def test_long_code_line_warns(self) -> None:
+        line = "        Total = " + " + ".join(["ValueNumber"] * 12)
+        self.assertFinding(self.run_check(module("M_Test", [line])), "WARN line is")
+
+    def test_long_string_literal_is_exempt(self) -> None:
+        line = '        Message = "' + "x" * 150 + '"'
+        self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
+
+    def test_long_declaration_comment_is_exempt(self) -> None:
+        line = "    Private mIsBusy" + " " * 20 + "As Boolean" + " " * 20 + "'" + "y" * 100
+        self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
+
+    # --fix.
+    def test_fix_changes_whitespace_only(self) -> None:
+        raw = b'Attribute VB_Name = "M_Test"\nOption Explicit  \n\tDim A As Long\t\n'
+        fixed = cvs.fix(raw)
+        self.assertEqual(fixed, b'Attribute VB_Name = "M_Test"\r\nOption Explicit\r\n'
+                                b'    Dim A As Long\r\n')
+
+    def test_fix_keeps_frm_designer_block(self) -> None:
+        designer = b"VERSION 5.00\r\nBegin {C62A69F0} UF_Test \r\n\tCaption = 1   \r\nEnd\r\n"
+        code = b'Attribute VB_Name = "UF_Test"\r\nOption Explicit   \r\n'
+        fixed = cvs.fix(designer + code)
+        self.assertTrue(fixed.startswith(designer))
+        self.assertTrue(fixed.endswith(b"Option Explicit\r\n"))
+
+
+if __name__ == "__main__":
+    unittest.main()

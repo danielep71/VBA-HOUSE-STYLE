@@ -70,6 +70,8 @@ vba-house-style/
 │       │   └── M_Example.bas       🧪 a complete worked example
 │       └── scripts/
 │           └── check_vba_style.py  🔍 checker; --fix normalizes whitespace only
+├── tests/
+│   └── test_check_vba_style.py     🧪 checker tests
 └── tools/
     └── build_plugin.py             🛠️ builds the uploadable ZIP
 ```
@@ -88,6 +90,12 @@ python skills\vba-house-style\scripts\check_vba_style.py --fix src\    # normali
 
 `--fix` touches whitespace and line endings only, never code, and skips the
 `.frm` designer block. The exit code is `1` while any error remains.
+
+Tests (standard library only):
+
+```powershell
+python -m unittest discover -s tests
+```
 
 ## 🚀 Release a new version
 
