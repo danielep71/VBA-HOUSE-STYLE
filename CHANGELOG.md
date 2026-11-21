@@ -5,6 +5,8 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-21
+
 ### Added
 
 - Checker: WARN findings for statement-level conventions: `Next` without its
@@ -19,9 +21,6 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 - `AGENTS.md` and `CLAUDE.md` (working instructions, kept out of the public
   repository).
-
-The plugin version is 1.2.0 for the checker change (#3); the entry is dated
-at release.
 
 ## [1.1.1] - 2026-11-21
 
