@@ -164,6 +164,131 @@ class CheckerTest(unittest.TestCase):
         line = "    Private mIsBusy" + " " * 20 + "As Boolean" + " " * 20 + "'" + "y" * 100
         self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
 
+    # Statement-level conventions.
+    def statements(self, *code: str, signature: str = "Public Sub M_Test_A()") -> list[str]:
+        proc = procedure(signature, cvs.FIELDS)
+        body = ["        " + c for c in code]
+        return self.run_check(module("M_Test", proc[:-2] + body + proc[-2:]))
+
+    def test_next_without_counter_warns(self) -> None:
+        self.assertFinding(self.statements("Next"), "Next without the counter name")
+
+    def test_next_with_counter_and_resume_next_are_silent(self) -> None:
+        findings = self.statements("Next Index", "On Error Resume Next", "Resume Next")
+        self.assertNoFinding(findings, "Next without")
+
+    def test_colon_separator_warns(self) -> None:
+        self.assertFinding(self.statements("A = 1: B = 2"), "statement separator")
+
+    def test_colon_in_label_string_comment_and_named_argument_is_silent(self) -> None:
+        findings = self.statements(
+            'Message = "a: b"', "Call Work(Name:=1)", "X = 1 'note: text", "Done:")
+        self.assertNoFinding(findings, "statement separator")
+
+    def test_instr_without_compare_warns(self) -> None:
+        self.assertFinding(self.statements("N = VBA.InStr(Text, Part)"),
+                           "InStr without an explicit compare mode")
+        self.assertFinding(self.statements("N = InStr(1, Text, Part)"),
+                           "InStr without an explicit compare mode")
+
+    def test_strcomp_without_compare_warns(self) -> None:
+        self.assertFinding(self.statements("N = VBA.StrComp(A, B)"),
+                           "StrComp without an explicit compare mode")
+
+    def test_instr_and_strcomp_with_compare_are_silent(self) -> None:
+        findings = self.statements(
+            "N = VBA.InStr(Text, Part, vbTextCompare)",
+            "N = VBA.InStr(1, Text, Part, vbBinaryCompare)",
+            "N = VBA.StrComp(A, B, Mode)", "N = VBA.InStr(1, Text, Part, CompareMode)",
+            "N = Left$(Text, VBA.InStr(1, Text, Part, vbBinaryCompare))",
+            "N = Item.InStr(Text)")
+        self.assertNoFinding(findings, "explicit compare mode")
+
+    def test_instr_with_variable_compare_is_silent(self) -> None:
+        findings = self.statements("N = VBA.InStr(Text, Part, Mode)")
+        self.assertNoFinding(findings, "explicit compare mode")
+
+    def test_compare_in_input_names_does_not_count(self) -> None:
+        findings = self.statements("N = VBA.StrComp(TextToCompare, Expected)",
+                                   "N = VBA.InStr(1, CompareText, Needle)")
+        self.assertEqual(sum("explicit compare mode" in f for f in findings), 2, findings)
+
+    def test_named_compare_argument_is_silent(self) -> None:
+        findings = self.statements("N = VBA.StrComp(A, B, Compare:=vbTextCompare)",
+                                   "N = VBA.InStr(Start:=1, String1:=A, String2:=B, "
+                                   "Compare:=vbBinaryCompare)")
+        self.assertNoFinding(findings, "explicit compare mode")
+
+    def test_date_literal_is_not_a_separator(self) -> None:
+        findings = self.statements("Deadline = #11/21/2026 12:30:00#",
+                                   "Deadline = #12:30:00 PM#", "Deadline = #1/2/2026#")
+        self.assertNoFinding(findings, "statement separator")
+
+    def test_file_number_markers_are_not_a_date_literal(self) -> None:
+        findings = self.statements("Print #1, Value: Print #2, OtherValue")
+        self.assertFinding(findings, "statement separator")
+        findings = self.statements("Print #1, VBA.StrComp(A, B): Print #2, C")
+        self.assertFinding(findings, "StrComp without an explicit compare mode")
+
+    def test_month_name_date_literal_is_not_a_separator(self) -> None:
+        findings = self.statements("Deadline = #January 5, 2026 9:30 AM#",
+                                   "Deadline = #2026-01-05 09:30:00#")
+        self.assertNoFinding(findings, "statement separator")
+
+    def test_attribute_records_are_not_statements(self) -> None:
+        text = ('Attribute VB_Name = "M_Test"\r\nAttribute VB_Description = ""\r\n'
+                'Attribute VB_ProcData.VB_Invoke_Func = " \\n14"\r\nOption Explicit\r\n')
+        findings = self.run_check(text)
+        self.assertNoFinding(findings, "vbNullString")
+        self.assertNoFinding(findings, "statement separator")
+
+    def test_rem_comment_is_not_code(self) -> None:
+        findings = self.statements("Rem Example: VBA.StrComp(A, B)", "Rem Next",
+                                   "Remainder = 1")
+        self.assertNoFinding(findings, "statement separator")
+        self.assertNoFinding(findings, "explicit compare mode")
+        self.assertNoFinding(findings, "Next without")
+
+    def test_statement_before_rem_is_still_checked(self) -> None:
+        findings = self.statements("A = 1: Rem note")
+        self.assertFinding(findings, "statement separator")
+
+    def test_empty_string_comparison_warns(self) -> None:
+        self.assertFinding(self.statements('If Name = "" Then'), "vbNullString")
+        self.assertFinding(self.statements('If Name <> "" Then'), "vbNullString")
+
+    def test_empty_string_in_const_and_literal_text_is_silent(self) -> None:
+        findings = self.statements('Const EMPTY_TEXT As String = ""', 'Message = "a = """""',
+                                   "If Name = vbNullString Then")
+        self.assertNoFinding(findings, "vbNullString")
+
+    def test_parameter_without_byval_or_byref_warns(self) -> None:
+        findings = self.statements(signature="Public Sub M_Test_A(Name As String)")
+        self.assertFinding(findings, "parameter Name has no ByVal or ByRef")
+
+    def test_parameter_without_as_warns(self) -> None:
+        findings = self.statements(signature="Public Sub M_Test_A(ByVal Name)")
+        self.assertFinding(findings, "parameter Name has no As type")
+
+    def test_function_without_as_warns(self) -> None:
+        findings = self.run_check(module("M_Test", procedure(
+            "Public Function M_Test_F(ByVal Name As String)", cvs.FIELDS)))
+        self.assertFinding(findings, "no As return type")
+
+    def test_complete_signatures_are_silent(self) -> None:
+        findings = self.statements(signature=(
+            "Public Sub M_Test_A(ByVal Name As String, ByRef Items() As Long, _\r\n"
+            "    Optional ByVal Mode As Long = 0, ParamArray Rest() As Variant)"))
+        self.assertNoFinding(findings, "parameter")
+        self.assertNoFinding(findings, "return type")
+
+    def test_empty_parameter_list_is_silent(self) -> None:
+        self.assertNoFinding(self.statements(), "parameter")
+
+    def test_statement_findings_do_not_change_errors(self) -> None:
+        findings = self.statements("Next", "A = 1: B = 2")
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # --fix.
     def test_fix_changes_whitespace_only(self) -> None:
         raw = b'Attribute VB_Name = "M_Test"\nOption Explicit  \n\tDim A As Long\t\n'
