@@ -559,8 +559,9 @@ def unqualified_calls(code: str, declared: set[str],
     """Library names of VBA_QUALIFIED used bare in one statement's code, as
     (listed spelling, written text). Not reported: a member (after "." or
     "!"), a named argument or an Open ... Len = clause (followed by "=" or
-    ":="), a name the file declares, the Mid statement, and Len or LenB of a
-    variable declared As a non-scalar type."""
+    ":="), a name the file declares, the Mid statement, and Len or LenB of an
+    expression that starts with a variable declared As a non-scalar type or
+    with a With member."""
     found: list[tuple[str, str]] = []
     for m in VBA_NAME_RE.finditer(code):
         before = code[:m.start()].rstrip()
@@ -575,9 +576,12 @@ def unqualified_calls(code: str, declared: set[str],
             continue
         if name.lower() in ("len", "lenb") and after.startswith("("):
             parsed = call_args(after, 0)
-            arg = re.fullmatch(r"([A-Za-z]\w*)(?:\(.*\))?", parsed[0][0]) \
+            # The argument's type is judged by its first name: a record or
+            # object there (Item, Item.Inner, Items(1).Inner) or a With
+            # member (.Inner) may be a user-defined type, so stay silent.
+            root = re.match(r"\.|[A-Za-z]\w*", parsed[0][0]) \
                 if parsed and len(parsed[0]) == 1 else None
-            if arg and arg.group(1).lower() in records:
+            if root and (root.group() == "." or root.group().lower() in records):
                 continue
         found.append((VBA_SPELLING[name.lower()], name))
     return found

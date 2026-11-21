@@ -264,8 +264,9 @@ Capture `Err` before any other call; raise custom errors as
   `vbNullString` rather than `""`. The checker reports the names in
   `VBA_QUALIFIED` (`scripts/check_vba_style.py`) when they are written bare,
   except a member (`Item.Len`), a name the file declares itself, the `Mid$`
-  statement, the `Len =` clause of `Open`, and `Len` / `LenB` of a variable
-  declared as a user-defined type or object. A function with the same name
+  statement, the `Len =` clause of `Open`, and `Len` / `LenB` of an
+  expression that starts with a variable declared as a user-defined type or
+  object (`Item`, `Item.Inner`) or with a `With` member. A function with the same name
   in another module is not seen: ignore the warning there.
 - Explicit compare mode in `InStr` / `StrComp` (`vbBinaryCompare` or
   `vbTextCompare`).

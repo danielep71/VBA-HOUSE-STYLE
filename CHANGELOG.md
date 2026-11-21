@@ -19,7 +19,8 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 - Checker: WARN for VBA library calls written without `VBA.` (`Len`, `Trim$`,
   `UCase$`, `InStr`, `CStr`...; the list is `VBA_QUALIFIED`) (#8). Members,
   names the file declares, the `Mid$` statement, the `Len =` clause of `Open`
-  and `Len` / `LenB` of a user-defined type are not reported. No `--fix`.
+  and `Len` / `LenB` of a user-defined type, an object or a `With` member
+  (`Item.Inner`, `.Inner`) are not reported. No `--fix`.
 
 ### Changed
 

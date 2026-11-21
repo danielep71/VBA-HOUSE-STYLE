@@ -458,8 +458,11 @@ class CheckerTest(unittest.TestCase):
     def test_open_len_clause_and_len_of_a_record_are_silent(self) -> None:
         findings = self.statements("Dim Record As T_Record", "Dim Records(1 To 2) As T_Record",
                                    "Open Path For Random As #1 Len = Len(Record)",
-                                   "Size = LenB(Records(1))")
+                                   "Size = LenB(Records(1))", "Size = Len(Record.Inner)",
+                                   "Size = LenB(Records(2).Inner)", "Size = Len(.Inner)")
         self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Dim Text As String", "Result = Len(Text.Value)")
+        self.assertFinding(findings, "use VBA.Len instead of Len")
         findings = self.statements("Result = Len(Text)",
                                    signature="Public Sub M_Test_A(ByRef Text As String)")
         self.assertFinding(findings, "use VBA.Len instead of Len")
