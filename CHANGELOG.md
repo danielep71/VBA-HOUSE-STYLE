@@ -5,8 +5,14 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-21
+
 ### Added
 
+- Checker: WARN findings for statement-level conventions: `Next` without its
+  counter, `:` between statements, `InStr` / `StrComp` without a compare mode,
+  parameters without `ByVal` / `ByRef` or `As`, a function without `As`, and
+  `= ""` instead of `vbNullString` (#3). Exit code and `--fix` are unchanged.
 - Issue label catalogue (`.github/labels.json`, 20 labels) with the sync and
   drift workflows and a guide, `docs/ISSUE_LABELS.md`.
 - `LICENSE` (MIT); the repository is now public.
@@ -15,8 +21,6 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 - `AGENTS.md` and `CLAUDE.md` (working instructions, kept out of the public
   repository).
-
-No plugin change, so no version bump.
 
 ## [1.1.1] - 2026-11-21
 

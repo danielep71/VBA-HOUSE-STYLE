@@ -33,6 +33,23 @@ STRING_RE = re.compile(r'"(?:[^"]|"")*"')
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
+# A date/time literal holds only digits, date and time separators, an AM/PM
+# marker or a month name. Anything else between two "#" is file-number syntax
+# (Print #1, A: Print #2, B), not a literal.
+DATE_RE = re.compile(
+    r"#\s*(?:\d[\d/\-.:, ]*|[A-Za-z]{3,9}\.?\s+\d[\d,: ]*)"
+    r"(?:\s*[AaPp][Mm])?\s*#")
+REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
+COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
+NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)
+# Attribute records are VBE-managed export metadata, not statements.
+ATTRIBUTE_RE = re.compile(r"^Attribute\s+\w", re.I)
+LABEL_LINE_RE = re.compile(r"^\s*\w+:\s*$")
+COMPARE_CALL_RE = re.compile(r"(?<![\w.])(?:VBA\.)?(InStr|StrComp)\s*\(", re.I)
+EMPTY_COMPARE_RE = re.compile(r'(?:<>|=)\s*""|""\s*(?:<>|=)')
+NEXT_RE = re.compile(r"^\s*Next\s*$", re.I)
+PARAM_RE = re.compile(
+    r"^(?:Optional\s+)?(?:ByVal|ByRef)\s+\w+(?:\(\s*\))?\s+As\s+\S", re.I)
 COMPACT_MAX = 15        # body lines up to which a Private procedure may be compact
 COMPACT_FIELDS = ["PURPOSE", "UPDATED"]
 
@@ -174,6 +191,145 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
         i = end + 1
+    out += statement_findings(lines, start)
+    return out
+
+
+def scrub(line: str) -> str:
+    """Code of one physical line: non-empty string literals become "S",
+    empty ones stay "", date literals become #D#, and a trailing comment
+    (apostrophe or Rem) is cut off."""
+    bare = STRING_RE.sub(lambda m: '""' if m.group(0) == '""' else '"S"', line)
+    bare = DATE_RE.sub("#D#", bare)
+    bare = REM_RE.sub("", bare)
+    if "'" in bare:
+        bare = bare[:bare.index("'")]
+    return bare.rstrip()
+
+
+def logical_lines(lines: list[str], start: int) -> list[tuple[int, str]]:
+    """(first line number, code) per statement line, with continuation lines
+    joined. Comment-only and blank lines give empty code."""
+    out: list[tuple[int, str]] = []
+    n = start
+    while n < len(lines):
+        first, code = n + 1, scrub(lines[n])
+        while code.endswith(" _") and n + 1 < len(lines):
+            n += 1
+            code = code[:-1] + " " + scrub(lines[n]).strip()
+        out.append((first, code))
+        n += 1
+    return out
+
+
+def split_args(text: str) -> list[str]:
+    """Top-level comma-separated parts of text (parentheses nest)."""
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur.strip())
+    return parts
+
+
+def call_args(code: str, open_at: int) -> tuple[list[str], int] | None:
+    """Arguments of the call whose "(" is at open_at, and the index after its
+    closing ")". None when the parenthesis is not closed on this statement."""
+    depth = 0
+    for i in range(open_at, len(code)):
+        if code[i] == "(":
+            depth += 1
+        elif code[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return split_args(code[open_at + 1:i]), i + 1
+    return None
+
+
+def missing_compare(name: str, args: list[str]) -> bool:
+    """True when the InStr/StrComp call certainly has no compare argument.
+    The decision uses the argument count and named-argument syntax, never
+    the text of the inputs; an ambiguous call (a variable that may be the
+    compare mode) is not reported."""
+    if any(NAMED_COMPARE_RE.match(a) for a in args):
+        return False
+    if name.lower() == "strcomp":
+        return len(args) == 2
+    if len(args) == 2:
+        return True
+    if len(args) == 3:
+        if COMPARE_CONST_RE.fullmatch(args[2]):
+            return False
+        return re.fullmatch(r"\d+", args[0]) is not None
+    return False
+
+
+def signature_problems(code: str, m: re.Match[str]) -> list[str]:
+    """ByVal/ByRef and As problems of a procedure signature."""
+    problems: list[str] = []
+    open_at = code.find("(", m.end())
+    if open_at < 0:
+        return problems
+    parsed = call_args(code, open_at)
+    if parsed is None:
+        return problems
+    params, after = parsed
+    for param in params:
+        if not param or re.match(r"ParamArray\b", param, re.I):
+            continue
+        param = re.sub(r"\s*=.*$", "", param)
+        if PARAM_RE.match(param):
+            continue
+        name = re.sub(r"^(?:Optional\s+)?(?:(?:ByVal|ByRef)\s+)?", "", param,
+                      flags=re.I).split()[0:1]
+        label = name[0] if name else param
+        if not re.search(r"\b(ByVal|ByRef)\b", param, re.I):
+            problems.append(f"parameter {label} has no ByVal or ByRef")
+        if not re.search(r"\bAs\s+\w", param, re.I):
+            problems.append(f"parameter {label} has no As type")
+    kind = m.group(1).lower()
+    if (kind == "function" or kind == "property get") \
+            and not re.match(r"\s+As\s+\w", code[after:], re.I):
+        problems.append("no As return type")
+    return problems
+
+
+def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str]]:
+    """Statement-level conventions (SKILL.md section 7), as WARN findings."""
+    out: list[tuple[str, int, str]] = []
+    for n, code in logical_lines(lines, start):
+        if not code.strip() or ATTRIBUTE_RE.match(code):
+            continue
+        # Next names its counter.
+        if NEXT_RE.match(code):
+            out.append(("WARN", n, "Next without the counter name"))
+        # One statement per line: ":" outside labels, named arguments (:=) excluded.
+        plain = code.replace(":=", "  ")
+        if ":" in plain and not LABEL_LINE_RE.match(plain):
+            out.append(("WARN", n, "statement separator ':' (one statement per line)"))
+        # Explicit compare mode in InStr / StrComp.
+        for call in COMPARE_CALL_RE.finditer(code):
+            parsed = call_args(code, call.end() - 1)
+            if parsed is None:
+                continue
+            args, name = parsed[0], call.group(1)
+            if missing_compare(name, args):
+                out.append(("WARN", n, f"{name} without an explicit compare mode"))
+        # vbNullString rather than "".
+        if EMPTY_COMPARE_RE.search(code) and not re.match(r"\s*(?:\w+\s+)*Const\b", code, re.I):
+            out.append(("WARN", n, 'use vbNullString instead of ""'))
+        # Signatures: ByVal/ByRef and As.
+        m = PROC_RE.match(code)
+        if m:
+            for problem in signature_problems(code, m):
+                out.append(("WARN", n, f"{m.group(2)}: {problem}"))
     return out
 
 

@@ -20,7 +20,11 @@ ones.
    FORM), the project prefix already in use (for example `DP_`, `INV_`) and
    any existing comments worth keeping.
 2. Run the checker in report mode to see the mechanical problems:
-   `python scripts/check_vba_style.py <files or folders>`
+   `python scripts/check_vba_style.py <files or folders>`. Besides layout it
+   warns on statement-level slips: `Next` without its counter, `:` between
+   statements, `InStr` / `StrComp` without a compare mode, parameters
+   without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
+   where `vbNullString` is expected.
 3. Reformat by hand following the rules below. Formatting is **behavior
    preserving**: never rename public members, change signatures, reorder
    `Attribute` lines, alter string literals, or change logic. If a rule would
