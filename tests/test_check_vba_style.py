@@ -208,6 +208,33 @@ class CheckerTest(unittest.TestCase):
         findings = self.statements("N = VBA.InStr(Text, Part, Mode)")
         self.assertNoFinding(findings, "explicit compare mode")
 
+    def test_compare_in_input_names_does_not_count(self) -> None:
+        findings = self.statements("N = VBA.StrComp(TextToCompare, Expected)",
+                                   "N = VBA.InStr(1, CompareText, Needle)")
+        self.assertEqual(sum("explicit compare mode" in f for f in findings), 2, findings)
+
+    def test_named_compare_argument_is_silent(self) -> None:
+        findings = self.statements("N = VBA.StrComp(A, B, Compare:=vbTextCompare)",
+                                   "N = VBA.InStr(Start:=1, String1:=A, String2:=B, "
+                                   "Compare:=vbBinaryCompare)")
+        self.assertNoFinding(findings, "explicit compare mode")
+
+    def test_date_literal_is_not_a_separator(self) -> None:
+        findings = self.statements("Deadline = #11/21/2026 12:30:00#",
+                                   "Deadline = #12:30:00 PM#", "Deadline = #1/2/2026#")
+        self.assertNoFinding(findings, "statement separator")
+
+    def test_rem_comment_is_not_code(self) -> None:
+        findings = self.statements("Rem Example: VBA.StrComp(A, B)", "Rem Next",
+                                   "Remainder = 1")
+        self.assertNoFinding(findings, "statement separator")
+        self.assertNoFinding(findings, "explicit compare mode")
+        self.assertNoFinding(findings, "Next without")
+
+    def test_statement_before_rem_is_still_checked(self) -> None:
+        findings = self.statements("A = 1: Rem note")
+        self.assertFinding(findings, "statement separator")
+
     def test_empty_string_comparison_warns(self) -> None:
         self.assertFinding(self.statements('If Name = "" Then'), "vbNullString")
         self.assertFinding(self.statements('If Name <> "" Then'), "vbNullString")

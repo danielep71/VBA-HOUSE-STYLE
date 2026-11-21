@@ -33,8 +33,11 @@ STRING_RE = re.compile(r'"(?:[^"]|"")*"')
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
+DATE_RE = re.compile(r"#[^#'\"]*\d[^#'\"]*#")
+REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
+COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
+NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)
 LABEL_LINE_RE = re.compile(r"^\s*\w+:\s*$")
-COMPARE_RE = re.compile(r"Compare", re.I)
 COMPARE_CALL_RE = re.compile(r"(?<![\w.])(?:VBA\.)?(InStr|StrComp)\s*\(", re.I)
 EMPTY_COMPARE_RE = re.compile(r'(?:<>|=)\s*""|""\s*(?:<>|=)')
 NEXT_RE = re.compile(r"^\s*Next\s*$", re.I)
@@ -187,8 +190,11 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
 
 def scrub(line: str) -> str:
     """Code of one physical line: non-empty string literals become "S",
-    empty ones stay "", and a trailing comment is cut off."""
+    empty ones stay "", date literals become #D#, and a trailing comment
+    (apostrophe or Rem) is cut off."""
     bare = STRING_RE.sub(lambda m: '""' if m.group(0) == '""' else '"S"', line)
+    bare = DATE_RE.sub("#D#", bare)
+    bare = REM_RE.sub("", bare)
     if "'" in bare:
         bare = bare[:bare.index("'")]
     return bare.rstrip()
@@ -240,6 +246,24 @@ def call_args(code: str, open_at: int) -> tuple[list[str], int] | None:
     return None
 
 
+def missing_compare(name: str, args: list[str]) -> bool:
+    """True when the InStr/StrComp call certainly has no compare argument.
+    The decision uses the argument count and named-argument syntax, never
+    the text of the inputs; an ambiguous call (a variable that may be the
+    compare mode) is not reported."""
+    if any(NAMED_COMPARE_RE.match(a) for a in args):
+        return False
+    if name.lower() == "strcomp":
+        return len(args) == 2
+    if len(args) == 2:
+        return True
+    if len(args) == 3:
+        if COMPARE_CONST_RE.fullmatch(args[2]):
+            return False
+        return re.fullmatch(r"\d+", args[0]) is not None
+    return False
+
+
 def signature_problems(code: str, m: re.Match[str]) -> list[str]:
     """ByVal/ByRef and As problems of a procedure signature."""
     problems: list[str] = []
@@ -286,12 +310,10 @@ def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str
         # Explicit compare mode in InStr / StrComp.
         for call in COMPARE_CALL_RE.finditer(code):
             parsed = call_args(code, call.end() - 1)
-            if parsed is None or COMPARE_RE.search(" ".join(parsed[0])):
+            if parsed is None:
                 continue
             args, name = parsed[0], call.group(1)
-            first_numeric = bool(args) and re.fullmatch(r"\d+", args[0]) is not None
-            if len(args) == 2 or (name.lower() == "instr" and len(args) == 3
-                                  and first_numeric):
+            if missing_compare(name, args):
                 out.append(("WARN", n, f"{name} without an explicit compare mode"))
         # vbNullString rather than "".
         if EMPTY_COMPARE_RE.search(code) and not re.match(r"\s*(?:\w+\s+)*Const\b", code, re.I):
