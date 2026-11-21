@@ -24,8 +24,10 @@ ones.
    warns on statement-level slips: `Next` without its counter, `:` between
    statements, `InStr` / `StrComp` without a compare mode, parameters
    without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
-   where `vbNullString` is expected, and VBA library calls written without
-   `VBA.` (the list of section 7). It also checks the body sections of
+   where `vbNullString` is expected, VBA library calls written without
+   `VBA.` (the list of section 7), `Select Case` without `Case Else`, and
+   local variables with a Hungarian prefix or a name that is not
+   PascalCase. It also checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
    clean exit in `EXIT PROCEDURE` before the label. One-line procedures and
@@ -278,8 +280,16 @@ Capture `Err` before any other call; raise custom errors as
   on the first line and the message on the next.
 - Local variables: PascalCase, descriptive (`NormalizedHoverMode`,
   `ShapeIndex`), no Hungarian prefixes; object variables released with
-  `Set x = Nothing` in the exit/cleanup path.
-- `Select Case` with `Case Else` whenever unexpected values matter.
+  `Set x = Nothing` in the exit/cleanup path. The checker reports a `Dim` or
+  `Static` inside a procedure whose name is not PascalCase (`shapeIndex`,
+  `Shape_Index`, a bare `i`) or starts with a lower-case `str`, `lng`,
+  `int`, `obj`, `bln`, `dbl`, `var`, `rng`, `ws` or `wb` followed by a
+  capital (`strName`); `Strength` and `Intent` are words. Module-level
+  variables, constants and parameters are not checked. Whether a name is
+  descriptive is left to the reviewer.
+- `Select Case` with `Case Else` whenever unexpected values matter. The
+  checker reports every `Select Case` without one (nested blocks are matched
+  to their own `End Select`); add `Case Else` or name the exception.
 - Keep lines readable (aim for 100 characters, hard limit 120). String
   literal contents and the trailing comment of an aligned declaration do not
   count toward the limit; the code around them does.

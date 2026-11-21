@@ -480,6 +480,62 @@ class CheckerTest(unittest.TestCase):
         findings = self.statements("Result = Len(Text)")
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # Select Case and local names.
+    def test_select_case_without_case_else_warns(self) -> None:
+        findings = self.statements("Select Case Count", "    Case 1", "        Debug.Print 1",
+                                   "End Select")
+        self.assertFinding(findings, "WARN Select Case without Case Else")
+
+    def test_select_case_with_case_else_is_silent(self) -> None:
+        findings = self.statements("Select Case Count", "    Case 1: Debug.Print 1",
+                                   "    Case Else", "        Debug.Print 2", "End Select")
+        self.assertNoFinding(findings, "Case Else")
+
+    def test_nested_select_case_is_matched_to_its_own_end(self) -> None:
+        inner_missing = ["Select Case Count", "    Case 1",
+                         "        Select Case Total", "            Case 2",
+                         "        End Select", "    Case Else", "End Select"]
+        findings = self.statements(*inner_missing)
+        self.assertEqual(sum("Case Else" in f for f in findings), 1, findings)
+        outer_missing = ["Select Case Count", "    Case 1",
+                         "        Select Case Total", "            Case Else",
+                         "        End Select", "End Select"]
+        findings = self.statements(*outer_missing)
+        self.assertEqual(sum("Case Else" in f for f in findings), 1, findings)
+        both = ["Select Case Count", "    Case 1", "        Select Case Total",
+                "            Case Else", "        End Select", "    Case Else", "End Select"]
+        self.assertNoFinding(self.statements(*both), "Case Else")
+
+    def test_hungarian_local_warns(self) -> None:
+        for name in ("strName", "lngCount", "intIndex", "objShape", "blnDone",
+                     "dblRate", "varValue", "rngData", "wsData", "wbBook"):
+            with self.subTest(name=name):
+                findings = self.statements(f"Dim {name} As Variant")
+                self.assertFinding(findings, f"WARN local variable {name} has a Hungarian prefix")
+
+    def test_local_that_is_not_pascal_case_warns(self) -> None:
+        findings = self.statements("Dim Total As Long, shapeIndex As Long",
+                                   "Static Shape_Count As Long")
+        self.assertFinding(findings, "local variable shapeIndex is not PascalCase")
+        self.assertFinding(findings, "local variable Shape_Count is not PascalCase")
+        self.assertNoFinding(findings, "local variable Total")
+
+    def test_words_constants_module_members_and_parameters_are_silent(self) -> None:
+        findings = self.statements("Dim Strength As Long", "Dim Intent As String",
+                                   "Dim Variance As Double, Items() As String",
+                                   "Const MAX_ITEMS As Long = 10",
+                                   signature="Private Sub mLabel_Click(ByVal strButton As Long)")
+        self.assertNoFinding(findings, "local variable")
+        decl = ["Private mName As String", "Public gCount As Long",
+                "Private Const MAX_COUNT As Long = 5", "Dim mTotal As Long", ""]
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        self.assertNoFinding(self.run_check(module("M_Test", decl + proc)), "local variable")
+
+    def test_select_and_naming_findings_do_not_change_errors(self) -> None:
+        findings = self.statements("Dim strName As String", "Select Case strName", "End Select")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # Tokenizer.
     def kinds(self, line: str) -> list[tuple[str, str]]:
         return cvs.tokenize(line)
