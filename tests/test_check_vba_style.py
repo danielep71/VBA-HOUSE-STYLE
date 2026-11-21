@@ -450,6 +450,7 @@ class CheckerTest(unittest.TestCase):
 
     def test_mid_statement_and_bare_left_right_are_silent(self) -> None:
         findings = self.statements('Mid$(Text, 1, 1) = "x"', 'If Ok Then Mid$(Text, 1) = "y"',
+                                   'Text = "abc": Mid$(Text, 1, 1) = "x"',
                                    "Left = 10", "Result = Right(Text, 2)")
         self.assertNoFinding(findings, "use VBA.")
         findings = self.statements("Result = Mid$(Text, 1, 1)")

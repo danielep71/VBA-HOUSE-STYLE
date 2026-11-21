@@ -571,8 +571,9 @@ def unqualified_calls(code: str, declared: set[str],
         name = m.group(1)
         if name.rstrip("$").lower() in declared:
             continue
-        # The Mid statement (Mid$(Text, 1, 1) = "x") cannot be qualified.
-        if name.lower() == "mid$" and re.search(r"(?:^|\b(?:Then|Else))$", before, re.I):
+        # The Mid statement (Mid$(Text, 1, 1) = "x") cannot be qualified. It
+        # starts a statement: at the line start, after ":" or Then / Else.
+        if name.lower() == "mid$" and re.search(r"(?:^|:|\b(?:Then|Else))$", before, re.I):
             continue
         if name.lower() in ("len", "lenb") and after.startswith("("):
             parsed = call_args(after, 0)
