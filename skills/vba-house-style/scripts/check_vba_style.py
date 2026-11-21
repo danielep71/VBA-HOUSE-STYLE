@@ -29,7 +29,6 @@ PROC_RE = re.compile(
 END_RE = re.compile(r"^End\s+(Sub|Function|Property)\b", re.I)
 BANNER_RE = re.compile(r"^'[-=]{5,}\s*$")
 LABEL_RE = re.compile(r"' [A-Z][A-Z /]+")
-STRING_RE = re.compile(r'"(?:[^"]|"")*"')
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
@@ -39,7 +38,7 @@ DECL_RE = re.compile(
 DATE_RE = re.compile(
     r"#\s*(?:\d[\d/\-.:, ]*|[A-Za-z]{3,9}\.?\s+\d[\d,: ]*)"
     r"(?:\s*[AaPp][Mm])?\s*#")
-REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
+REM_RE = re.compile(r"Rem\b", re.I)
 COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
 NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)
 # Attribute records are VBE-managed export metadata, not statements.
@@ -52,6 +51,49 @@ PARAM_RE = re.compile(
     r"^(?:Optional\s+)?(?:ByVal|ByRef)\s+\w+(?:\(\s*\))?\s+As\s+\S", re.I)
 COMPACT_MAX = 15        # body lines up to which a Private procedure may be compact
 COMPACT_FIELDS = ["PURPOSE", "UPDATED"]
+TRIVIAL_MAX = 1         # body lines up to which a procedure is trivial (one-line getter)
+# Body sections (SKILL.md section 6): standard ones have a fixed rank, task
+# sections sit between INITIALIZE and EXIT PROCEDURE.
+SECTION_RANK = {"DECLARE": 0, "INITIALIZE": 1, "EXIT PROCEDURE": 3, "ERROR HANDLER": 4}
+TASK_RANK = 2
+LOCAL_DIM_RE = re.compile(r"\s*(?:Dim|Static)\s+\w", re.I)
+PROC_NAME_RE = re.compile(r'\s*Const\s+PROC_NAME\s+As\s+String\s*=\s*"[^"]*"\s*$', re.I)
+ON_ERROR_GOTO_RE = re.compile(r"\s*On\s+Error\s+GoTo\s+([A-Za-z]\w*)\s*$", re.I)
+LABEL_AT_RE = re.compile(r"(\s*)([A-Za-z]\w*):(?!=)")
+EXIT_PROC_RE = re.compile(r"\s*Exit\s+(?:Sub|Function|Property)\s*$", re.I)
+# VBA library functions that must be written VBA.<Name> (SKILL.md section 7).
+# Kept short on purpose: a name that a project may define itself is a false
+# positive. Left, Right and Mid appear only with "$": bare Left/Right are
+# UserForm and control properties, and Mid is also a statement.
+VBA_QUALIFIED = (
+    "Len", "LenB", "Trim", "Trim$", "LTrim", "LTrim$", "RTrim", "RTrim$",
+    "UCase", "UCase$", "LCase", "LCase$", "Left$", "Right$", "Mid$",
+    "InStr", "InStrRev", "StrComp",
+    "CStr", "CLng", "CInt", "CDbl", "CBool", "CDate",
+)
+VBA_NAME_RE = re.compile(
+    r"(?<![\w$])(" + "|".join(re.escape(n) for n in
+                              sorted(VBA_QUALIFIED, key=len, reverse=True))
+    + r")(?![\w$])", re.I)
+VBA_SPELLING = {n.lower(): n for n in VBA_QUALIFIED}
+DECLARE_STMT_RE = re.compile(
+    r"^(?:(?:Public|Private|Friend)\s+)?Declare\s+(?:PtrSafe\s+)?(?:Sub|Function)\s+(\w+)", re.I)
+EVENT_RE = re.compile(r"^(?:Public\s+)?Event\s+(\w+)", re.I)
+VAR_STMT_RE = re.compile(
+    r"^(?:(?:Public|Private|Global|Friend|Dim|Static)\s+|ReDim\s+(?:Preserve\s+)?)"
+    r"(?:Const\s+)?(.*)$|^Const\s+(.*)$", re.I)
+BLOCK_RE = re.compile(r"^(?:(?:Public|Private)\s+)?(Enum|Type)\s+(\w+)", re.I)
+AS_TYPE_RE = re.compile(r"\bAs\s+(?:New\s+)?(\w+)", re.I)
+SCALAR_TYPES = {"string", "variant", "long", "integer", "double", "single", "currency",
+                "date", "boolean", "byte", "longlong", "longptr", "decimal"}
+SELECT_RE = re.compile(r"Select\s+Case\b", re.I)
+CASE_ELSE_RE = re.compile(r"Case\s+Else\b", re.I)
+END_SELECT_RE = re.compile(r"End\s+Select\b", re.I)
+LOCAL_VAR_RE = re.compile(r"(?:Dim|Static)\s+(.*)$", re.I)
+# Hungarian prefix: a lower-case type tag followed by an upper-case letter
+# (strName, wsData). Case-sensitive, so Strength and Intent are words.
+HUNGARIAN_RE = re.compile(r"(str|lng|int|obj|bln|dbl|var|rng|ws|wb)[A-Z]")
+PASCAL_RE = re.compile(r"[A-Z][A-Za-z0-9]*$")
 
 
 def code_start(lines: list[str]) -> int:
@@ -64,13 +106,89 @@ def code_start(lines: list[str]) -> int:
     return 0
 
 
+CODE, STRING, DATE, COMMENT = "code", "string", "date", "comment"
+Token = tuple[str, str]
+
+
+def tokenize(line: str) -> list[Token]:
+    """Split one physical line into (kind, text) tokens: code, string
+    literal ("" escapes), date literal, comment (apostrophe, or Rem at the
+    start of a statement). Joined, the texts give back the line. Every
+    statement rule reads these tokens, never the raw text."""
+    tokens: list[Token] = []
+    code: list[str] = []
+    stmt_start = True
+    i, n = 0, len(line)
+
+    def flush() -> None:
+        if code:
+            tokens.append((CODE, "".join(code)))
+            code.clear()
+
+    while i < n:
+        ch = line[i]
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if line[j] == '"':
+                    if j + 1 < n and line[j + 1] == '"':
+                        j += 2
+                        continue
+                    break
+                j += 1
+            end = min(j + 1, n)
+            flush()
+            tokens.append((STRING, line[i:end]))
+            i, stmt_start = end, False
+            continue
+        if ch == "'":
+            flush()
+            tokens.append((COMMENT, line[i:]))
+            return tokens
+        if ch == "#":
+            m = DATE_RE.match(line, i)
+            if m:
+                flush()
+                tokens.append((DATE, m.group()))
+                i, stmt_start = m.end(), False
+                continue
+        if stmt_start and ch in "Rr" and REM_RE.match(line, i):
+            flush()
+            tokens.append((COMMENT, line[i:]))
+            return tokens
+        if ch == ":":
+            stmt_start = True
+        elif not ch.isspace():
+            stmt_start = False
+        code.append(ch)
+        i += 1
+    flush()
+    return tokens
+
+
+def code_view(tokens: list[Token]) -> str:
+    """The code of a line for the statement rules: non-empty strings become
+    "S", empty ones stay "", date literals become #D#, comments are dropped."""
+    out = []
+    for kind, text in tokens:
+        if kind == CODE:
+            out.append(text)
+        elif kind == STRING:
+            out.append('""' if text == '""' else '"S"')
+        elif kind == DATE:
+            out.append("#D#")
+    return "".join(out).rstrip()
+
+
 def code_length(line: str) -> int:
     """Length of a line without string-literal contents and, for a
     declaration, without its trailing comment (tables and long literals are
     exempt from the line limit; the code around them is not)."""
-    bare = STRING_RE.sub('""', line)
-    if DECL_RE.match(bare) and "'" in bare:
-        bare = bare[:bare.index("'")].rstrip()
+    tokens = tokenize(line)
+    bare = "".join('""' if kind == STRING else text for kind, text in tokens)
+    if DECL_RE.match(bare) and any(kind == COMMENT for kind, _ in tokens):
+        bare = "".join('""' if kind == STRING else text for kind, text in tokens
+                       if kind != COMMENT).rstrip()
     return len(bare)
 
 
@@ -91,6 +209,89 @@ def field_problems(labels: list[str], required: list[str]) -> list[str]:
         if before:
             problems.append(f"extra section {label} must follow {before[-1]}")
             break
+    return problems
+
+
+def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, int]]:
+    """(title, index of the title line) of each section banner in
+    lines[first:last]: an UPPERCASE title after one space, between two banner
+    lines. Header fields and the centered title are not sections."""
+    out = []
+    for n in range(max(first + 1, 1), last - 1):
+        line = lines[n]
+        title = line[2:].strip()
+        if line.startswith("' ") and not line.startswith("'  ") and title \
+                and title == title.upper() and re.search("[A-Z]", title) \
+                and BANNER_RE.match(lines[n - 1]) and BANNER_RE.match(lines[n + 1]):
+            out.append((title, n))
+    return out
+
+
+def body_problems(lines: list[str], stmts: list[tuple[int, str]], first: int,
+                  last: int, proc_name: str, kind: str) -> list[tuple[int, str]]:
+    """Layout problems of one procedure body (SKILL.md section 6), as
+    (line number, message). stmts holds the (line index, code) of each
+    statement in lines[first:last]."""
+    problems: list[tuple[int, str]] = []
+    sections = body_sections(lines, first, last)
+
+    def section_at(idx: int) -> str | None:
+        title = None
+        for name, at in sections:
+            if at >= idx:
+                break
+            title = name
+        return title
+
+    # Order: DECLARE, INITIALIZE, task sections, EXIT PROCEDURE, ERROR HANDLER.
+    prev, prev_rank = "", -1
+    for title, at in sections:
+        rank = SECTION_RANK.get(title, TASK_RANK)
+        if rank < prev_rank:
+            problems.append((at + 1, f"section {title} is out of order (after {prev})"))
+            break
+        prev, prev_rank = title, rank
+
+    # DECLARE starts with PROC_NAME; needed for local variables or an error handler.
+    handlers = [(idx, m.group(1)) for idx, code in stmts
+                if (m := ON_ERROR_GOTO_RE.match(code))]
+    declare = next((at for title, at in sections if title == "DECLARE"), None)
+    if declare is not None:
+        idx, code = next(((i, c) for i, c in stmts if i > declare), (declare, ""))
+        if section_at(idx) != "DECLARE" or not PROC_NAME_RE.match(code):
+            problems.append((idx + 1, "DECLARE does not start with Const PROC_NAME As String"))
+        else:
+            n = idx
+            while lines[n].rstrip().endswith(" _") and n + 1 < last:
+                n += 1
+            value = next((t[1:-1] for line in lines[idx:n + 1]
+                          for k, t in tokenize(line) if k == STRING), proc_name)
+            if value.lower() != proc_name.lower():
+                problems.append((idx + 1, f'PROC_NAME is "{value}", expected "{proc_name}"'))
+    else:
+        need = next((i for i, c in stmts if LOCAL_DIM_RE.match(c)), None)
+        if need is None and handlers:
+            need = handlers[0][0]
+        if need is not None:
+            problems.append((need + 1, "no DECLARE section for local variables or error handler"))
+
+    # On Error GoTo <label> in INITIALIZE; the label at column 0; the clean
+    # exit in EXIT PROCEDURE before the label.
+    if handlers:
+        idx, label = handlers[0]
+        if section_at(idx) != "INITIALIZE":
+            problems.append((idx + 1, f"On Error GoTo {label} is not in INITIALIZE"))
+        label_at = next((i for i, c in stmts if (m := LABEL_AT_RE.match(c))
+                         and m.group(2).lower() == label.lower()), None)
+        if label_at is None:
+            problems.append((idx + 1, f"label {label}: not found"))
+        else:
+            if lines[label_at][:1].isspace():
+                problems.append((label_at + 1, f"label {label}: is not at column 0"))
+            if not any(EXIT_PROC_RE.match(c) and section_at(i) == "EXIT PROCEDURE"
+                       for i, c in stmts if i < label_at):
+                problems.append((label_at + 1,
+                                 f"no Exit {kind} in EXIT PROCEDURE before {label}:"))
     return problems
 
 
@@ -156,7 +357,10 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         for msg in field_problems(labels, FIELDS):
             add("WARN", top + 1, f"component {msg}")
 
-    # Procedures: header fields in order, spacing between procedures.
+    # Procedures: header fields in order, spacing between procedures, body
+    # sections.
+    component = names[0] if names else path.stem
+    statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
     i = start
     while i < len(lines):
         m = PROC_RE.match(lines[i])
@@ -190,21 +394,21 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
+        if not compact and body > TRIVIAL_MAX:
+            stmts = [(n, statements[n]) for n in range(k + 1, end) if n in statements]
+            kind = m.group(1).split()[0].capitalize()
+            # Sections start after the banner that closes the header, so the
+            # procedure title is never read as a section.
+            first = k + 1
+            updated = next((n for n in range(k + 1, end) if lines[n].rstrip() == "' UPDATED"), None)
+            if updated is not None:
+                first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
+            for line_no, msg in body_problems(lines, stmts, first, end,
+                                              f"{component}.{name}", kind):
+                add("WARN", line_no, f"{name}: {msg}")
         i = end + 1
     out += statement_findings(lines, start)
     return out
-
-
-def scrub(line: str) -> str:
-    """Code of one physical line: non-empty string literals become "S",
-    empty ones stay "", date literals become #D#, and a trailing comment
-    (apostrophe or Rem) is cut off."""
-    bare = STRING_RE.sub(lambda m: '""' if m.group(0) == '""' else '"S"', line)
-    bare = DATE_RE.sub("#D#", bare)
-    bare = REM_RE.sub("", bare)
-    if "'" in bare:
-        bare = bare[:bare.index("'")]
-    return bare.rstrip()
 
 
 def logical_lines(lines: list[str], start: int) -> list[tuple[int, str]]:
@@ -213,10 +417,10 @@ def logical_lines(lines: list[str], start: int) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     n = start
     while n < len(lines):
-        first, code = n + 1, scrub(lines[n])
+        first, code = n + 1, code_view(tokenize(lines[n]))
         while code.endswith(" _") and n + 1 < len(lines):
             n += 1
-            code = code[:-1] + " " + scrub(lines[n]).strip()
+            code = code[:-1] + " " + code_view(tokenize(lines[n])).strip()
         out.append((first, code))
         n += 1
     return out
@@ -301,12 +505,153 @@ def signature_problems(code: str, m: re.Match[str]) -> list[str]:
     return problems
 
 
+def first_word(text: str) -> str | None:
+    """The identifier a declaration part starts with (after its modifiers)."""
+    text = re.sub(r"^(?:(?:Optional|ByVal|ByRef|ParamArray|WithEvents|Const)\s+)+",
+                  "", text.strip(), flags=re.I)
+    m = re.match(r"[A-Za-z]\w*", text)
+    return m.group().lower() if m else None
+
+
+def declared_names(statements: list[tuple[int, str]]) -> tuple[set[str], set[str]]:
+    """Lower-case names the file declares (procedures, Declare and Event
+    names, their parameters, variables and constants of any scope, Enum and
+    Type members), and the subset declared As a type that is not a VBA
+    scalar (a user-defined type or an object). A library name the file
+    declares is its own; Len of a user-defined type cannot be VBA.Len."""
+    names: set[str] = set()
+    records: set[str] = set()
+    block = False
+
+    def add(part: str) -> None:
+        word = first_word(part)
+        if not word:
+            return
+        names.add(word)
+        m = AS_TYPE_RE.search(part)
+        if m and m.group(1).lower() not in SCALAR_TYPES:
+            records.add(word)
+
+    # One entry per statement: a line may hold several, split at ":" (not
+    # ":="; strings are already masked).
+    parts = [part for _, code in statements for part in re.split(r":(?!=)", code)]
+    for code in parts:
+        code = code.strip()
+        if not code or ATTRIBUTE_RE.match(code):
+            continue
+        if block:
+            if re.match(r"End\s+(?:Enum|Type)\b", code, re.I):
+                block = False
+            else:
+                add(code)
+            continue
+        m = BLOCK_RE.match(code)
+        if m:
+            block = True
+            names.add(m.group(2).lower())
+            continue
+        m = PROC_RE.match(code) or DECLARE_STMT_RE.match(code) or EVENT_RE.match(code)
+        if m:
+            names.add(m.group(m.lastindex).lower())
+            open_at = code.find("(", m.end())
+            parsed = call_args(code, open_at) if open_at >= 0 else None
+            for param in parsed[0] if parsed else []:
+                add(param)
+            continue
+        m = VAR_STMT_RE.match(code)
+        if m:
+            for part in split_args(m.group(1) or m.group(2)):
+                add(part)
+    return names, records
+
+
+def unqualified_calls(code: str, declared: set[str],
+                      records: set[str]) -> list[tuple[str, str]]:
+    """Library names of VBA_QUALIFIED used bare in one statement's code, as
+    (listed spelling, written text). Not reported: a member (after "." or
+    "!"), a named argument or an Open ... Len = clause (followed by "=" or
+    ":="), a name the file declares, the Mid statement, and Len or LenB of an
+    expression that starts with a variable declared As a non-scalar type or
+    with a With member."""
+    found: list[tuple[str, str]] = []
+    for m in VBA_NAME_RE.finditer(code):
+        before = code[:m.start()].rstrip()
+        after = code[m.end():].lstrip()
+        if before.endswith((".", "!")) or after.startswith((":=", "=")):
+            continue
+        name = m.group(1)
+        if name.rstrip("$").lower() in declared:
+            continue
+        # The Mid statement (Mid$(Text, 1, 1) = "x") cannot be qualified. It
+        # starts a statement: at the line start, after ":" or Then / Else.
+        if name.lower() == "mid$" and re.search(r"(?:^|:|\b(?:Then|Else))$", before, re.I):
+            continue
+        if name.lower() in ("len", "lenb") and after.startswith("("):
+            parsed = call_args(after, 0)
+            # The argument's type is judged by its first name: a record or
+            # object there (Item, Item.Inner, Items(1).Inner) or a With
+            # member (.Inner) may be a user-defined type, so stay silent.
+            root = re.match(r"\.|[A-Za-z]\w*", parsed[0][0]) \
+                if parsed and len(parsed[0]) == 1 else None
+            if root and (root.group() == "." or root.group().lower() in records):
+                continue
+        found.append((VBA_SPELLING[name.lower()], name))
+    return found
+
+
+def block_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Select Case blocks without Case Else, and local variables (Dim or
+    Static inside a procedure) with a Hungarian prefix or a name that is not
+    PascalCase, as (line number, message). Module-level variables,
+    constants and parameters are not local variables."""
+    out: list[tuple[int, str]] = []
+    selects: list[list] = []        # [line number, has Case Else] per open block
+    in_proc = False
+    for n, code in statements:
+        # One entry per statement: split at ":" (not ":="; strings are masked).
+        for part in re.split(r":(?!=)", code):
+            part = part.strip()
+            if not part:
+                continue
+            if PROC_RE.match(part):
+                in_proc = True
+            elif END_RE.match(part):
+                in_proc = False
+            if SELECT_RE.match(part):
+                selects.append([n, False])
+            elif CASE_ELSE_RE.match(part) and selects:
+                selects[-1][1] = True
+            elif END_SELECT_RE.match(part) and selects:
+                line_no, has_else = selects.pop()
+                if not has_else:
+                    out.append((line_no, "Select Case without Case Else"))
+            m = LOCAL_VAR_RE.match(part) if in_proc else None
+            if m:
+                for decl in split_args(m.group(1)):
+                    name = re.match(r"\s*(?:WithEvents\s+)?([A-Za-z]\w*)", decl, re.I)
+                    if not name:
+                        continue
+                    name = name.group(1)
+                    prefix = HUNGARIAN_RE.match(name)
+                    if prefix:
+                        out.append((n, f"local variable {name} has a Hungarian prefix "
+                                       f"({prefix.group(1)})"))
+                    elif not PASCAL_RE.match(name):
+                        out.append((n, f"local variable {name} is not PascalCase"))
+    return sorted(out)
+
+
 def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str]]:
     """Statement-level conventions (SKILL.md section 7), as WARN findings."""
     out: list[tuple[str, int, str]] = []
-    for n, code in logical_lines(lines, start):
+    statements = logical_lines(lines, start)
+    declared, records = declared_names(statements)
+    for n, code in statements:
         if not code.strip() or ATTRIBUTE_RE.match(code):
             continue
+        # VBA library calls qualified with VBA.
+        for name, written in unqualified_calls(code, declared, records):
+            out.append(("WARN", n, f"use VBA.{name} instead of {written}"))
         # Next names its counter.
         if NEXT_RE.match(code):
             out.append(("WARN", n, "Next without the counter name"))
@@ -330,6 +675,7 @@ def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str
         if m:
             for problem in signature_problems(code, m):
                 out.append(("WARN", n, f"{m.group(2)}: {problem}"))
+    out += [("WARN", n, msg) for n, msg in block_findings(statements)]
     return out
 
 

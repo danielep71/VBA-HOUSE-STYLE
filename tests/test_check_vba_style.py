@@ -40,6 +40,17 @@ def module(name: str, body: list[str], component: list[str] | None = None) -> st
     return "\r\n".join(lines) + "\r\n"
 
 
+DECLARE = ("DECLARE", [
+    '    Const PROC_NAME             As String = "M_Test.M_Test_Run"', "",
+    "    Dim Count                   As Long         'Counter"])
+INIT = ("INITIALIZE", ["    'Enable controlled error handling",
+                       "        On Error GoTo ErrorHandler"])
+TASK = ("DO WORK", ["    'Count once", "        Debug.Print 1"])
+EXIT = ("EXIT PROCEDURE", ["    'Exit before the error handler", "        Exit Sub"])
+HANDLER = ("ERROR HANDLER", ["ErrorHandler:", "    'Raise a descriptive error",
+                             "        Err.Raise Err.Number, PROC_NAME, Err.Description"])
+
+
 def procedure(signature: str, fields: list[str], code_lines: int = 1) -> list[str]:
     title = "'" + " " * 35 + "DO WORK"
     code = ["        Debug.Print 1"] * code_lines
@@ -288,6 +299,284 @@ class CheckerTest(unittest.TestCase):
     def test_statement_findings_do_not_change_errors(self) -> None:
         findings = self.statements("Next", "A = 1: B = 2")
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Body sections.
+    def sections(self, *parts: tuple[str, list[str]],
+                 signature: str = "Public Sub M_Test_Run()",
+                 title: str = "'" + " " * 35 + "DO WORK", blank: bool = True) -> list[str]:
+        proc = [signature, ""] + header(cvs.FIELDS, title) + ([""] if blank else [])
+        for name, code in parts:
+            proc += [BANNER, f"' {name}", BANNER] + code + [""]
+        end = "End Function" if " Function " in signature else "End Sub"
+        return self.run_check(module("M_Test", proc + [end]))
+
+    def test_full_body_layout_is_silent(self) -> None:
+        self.assertEqual(self.sections(DECLARE, INIT, TASK, EXIT, HANDLER), [])
+
+    def test_declare_without_error_handler_is_silent(self) -> None:
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_task_sections_only_are_silent(self) -> None:
+        self.assertEqual(self.sections(TASK, ("RETURN VALUE", ["        Debug.Print 2"])), [])
+
+    def test_one_line_getter_is_exempt(self) -> None:
+        findings = self.run_check(module("M_Test", procedure(
+            "Public Function M_Test_Get() As Long", cvs.FIELDS)[:-1] + ["End Function"]))
+        self.assertEqual(findings, [])
+
+    def test_compact_private_is_exempt(self) -> None:
+        proc = procedure("Private Sub M_Test_Run()", ["PURPOSE", "UPDATED"])
+        code = ["    Dim Count As Long", "    On Error GoTo Fail", "        Count = 1",
+                "        Exit Sub", "Fail:", "        Count = 0"]
+        self.assertEqual(self.run_check(module("M_Test", proc[:-3] + code + proc[-2:])), [])
+
+    def test_left_aligned_procedure_title_is_not_a_section(self) -> None:
+        findings = self.sections(DECLARE, TASK, title="' DO WORK")
+        self.assertNoFinding(findings, "out of order")
+        self.assertNoFinding(findings, "DECLARE does not")
+
+    def test_section_directly_after_the_header_is_found(self) -> None:
+        findings = self.sections(("DO WORK", ["    Dim Count As Long", "        Count = 1"]),
+                                 blank=False)
+        self.assertFinding(findings, "no DECLARE section")
+        findings = self.sections(DECLARE, TASK, blank=False)
+        self.assertEqual(findings, [])
+
+    def test_local_variables_without_declare_warn(self) -> None:
+        findings = self.sections(("DO WORK", ["    Dim Count As Long", "        Count = 1"]))
+        self.assertFinding(findings, "M_Test_Run: no DECLARE section")
+
+    def test_error_handler_without_declare_warns(self) -> None:
+        findings = self.sections(INIT, TASK, EXIT, HANDLER)
+        self.assertFinding(findings, "no DECLARE section for local variables or error handler")
+
+    def test_declare_must_start_with_proc_name(self) -> None:
+        declare = ("DECLARE", DECLARE[1][2:] + ["", DECLARE[1][0]])
+        findings = self.sections(declare, TASK)
+        self.assertFinding(findings, "DECLARE does not start with Const PROC_NAME As String")
+
+    def test_proc_name_must_match_component_and_procedure(self) -> None:
+        declare = ("DECLARE", [DECLARE[1][0].replace("M_Test_Run", "M_Test_Old")])
+        findings = self.sections(declare, TASK)
+        self.assertFinding(findings, 'PROC_NAME is "M_Test.M_Test_Old", expected "M_Test.M_Test_Run"')
+
+    def test_proc_name_on_a_continuation_line_is_read(self) -> None:
+        split = ["    Const PROC_NAME As String = _", '        "M_Test.M_Test_Old"']
+        findings = self.sections(("DECLARE", split), TASK)
+        self.assertFinding(findings, 'PROC_NAME is "M_Test.M_Test_Old"')
+        split[1] = '        "M_Test.M_Test_Run"'
+        self.assertEqual(self.sections(("DECLARE", split), TASK), [])
+
+    def test_on_error_outside_initialize_warns(self) -> None:
+        task = ("DO WORK", INIT[1] + TASK[1])
+        findings = self.sections(DECLARE, task, EXIT, HANDLER)
+        self.assertFinding(findings, "On Error GoTo ErrorHandler is not in INITIALIZE")
+
+    def test_later_on_error_goto_outside_initialize_is_silent(self) -> None:
+        task = ("DO WORK", ["        On Error Resume Next", "        Count = 1",
+                            "        On Error GoTo ErrorHandler"])
+        self.assertEqual(self.sections(DECLARE, INIT, task, EXIT, HANDLER), [])
+
+    def test_indented_error_label_warns(self) -> None:
+        handler = ("ERROR HANDLER", ["    ErrorHandler:"] + HANDLER[1][1:])
+        findings = self.sections(DECLARE, INIT, TASK, EXIT, handler)
+        self.assertFinding(findings, "label ErrorHandler: is not at column 0")
+
+    def test_section_out_of_order_warns(self) -> None:
+        findings = self.sections(DECLARE, TASK, INIT, EXIT, HANDLER)
+        self.assertFinding(findings, "section INITIALIZE is out of order (after DO WORK)")
+
+    def test_error_handler_not_last_warns(self) -> None:
+        findings = self.sections(DECLARE, INIT, TASK, HANDLER, EXIT)
+        self.assertFinding(findings, "section EXIT PROCEDURE is out of order (after ERROR HANDLER)")
+
+    def test_missing_clean_exit_warns(self) -> None:
+        findings = self.sections(DECLARE, INIT, TASK, HANDLER)
+        self.assertFinding(findings, "no Exit Sub in EXIT PROCEDURE before ErrorHandler:")
+
+    def test_clean_exit_names_the_procedure_kind(self) -> None:
+        declare = ("DECLARE", [DECLARE[1][0].replace("M_Test_Run", "M_Test_Get")])
+        findings = self.sections(declare, INIT, TASK, HANDLER,
+                                 signature="Public Function M_Test_Get() As Long")
+        self.assertFinding(findings, "no Exit Function in EXIT PROCEDURE")
+
+    def test_exit_outside_exit_procedure_warns(self) -> None:
+        task = ("DO WORK", TASK[1] + ["        Exit Sub"])
+        findings = self.sections(DECLARE, INIT, task, HANDLER)
+        self.assertFinding(findings, "no Exit Sub in EXIT PROCEDURE")
+
+    def test_body_findings_do_not_change_errors(self) -> None:
+        findings = self.sections(TASK, INIT, HANDLER)
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # VBA. qualification.
+    def test_each_unqualified_library_call_warns(self) -> None:
+        for name in cvs.VBA_QUALIFIED:
+            with self.subTest(name=name):
+                findings = self.statements(f"Result = {name}(Text)")
+                self.assertFinding(findings, f"use VBA.{name} instead of {name}")
+
+    def test_each_name_is_silent_qualified_as_member_in_text_or_declared(self) -> None:
+        for name in cvs.VBA_QUALIFIED:
+            base = name.rstrip("$")
+            with self.subTest(name=name):
+                findings = self.statements(
+                    f"Result = VBA.{name}(Text)", f"Result = Item.{name}(Text)",
+                    f"Result = Item!{name}", f"Result = .{name}(Text)",
+                    f'Message = "{name}(Text)"', f"'{name}(Text)",
+                    f"Result = 1 ' {name}(Text)", f"Run {base}:=1")
+                self.assertNoFinding(findings, "use VBA.")
+                findings = self.statements(f"Dim {base} As Long", f"Result = {name}(1)")
+                self.assertNoFinding(findings, "use VBA.")
+
+    def test_names_declared_by_the_file_are_silent(self) -> None:
+        proc = procedure("Private Function Trim(ByVal Text As String) As String",
+                         ["PURPOSE", "UPDATED"])
+        decl = ["Private Declare PtrSafe Function CStr Lib \"x\" () As Long",
+                "Public Event LCase(ByVal Len As Long)",
+                "Private Enum E_Kind", "    CLng = 1", "End Enum",
+                "Private Type T_Item", "    CDbl As Double", "End Type", ""]
+        body = ["        Result = Trim$(Text) & Len(Text) & CStr() & CLng & CDbl"]
+        findings = self.run_check(module("M_Test", decl + proc[:-2] + body + proc[-2:]))
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Len(Text)",
+                                   signature="Public Sub M_Test_A(ByVal Len As Long)")
+        self.assertNoFinding(findings, "use VBA.")
+
+    def test_name_case_and_spelling_are_reported(self) -> None:
+        findings = self.statements("Result = ucase$(Text)")
+        self.assertFinding(findings, "use VBA.UCase$ instead of ucase$")
+
+    def test_mid_statement_and_bare_left_right_are_silent(self) -> None:
+        findings = self.statements('Mid$(Text, 1, 1) = "x"', 'If Ok Then Mid$(Text, 1) = "y"',
+                                   'Text = "abc": Mid$(Text, 1, 1) = "x"',
+                                   "Left = 10", "Result = Right(Text, 2)")
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Mid$(Text, 1, 1)")
+        self.assertFinding(findings, "use VBA.Mid$ instead of Mid$")
+
+    def test_open_len_clause_and_len_of_a_record_are_silent(self) -> None:
+        findings = self.statements("Dim Record As T_Record", "Dim Records(1 To 2) As T_Record",
+                                   "Open Path For Random As #1 Len = Len(Record)",
+                                   "Size = LenB(Records(1))", "Size = Len(Record.Inner)",
+                                   "Size = LenB(Records(2).Inner)", "Size = Len(.Inner)")
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Dim Text As String", "Result = Len(Text.Value)")
+        self.assertFinding(findings, "use VBA.Len instead of Len")
+        findings = self.statements("Dim Count As Long: Dim Record As T_Record",
+                                   "Size = Len(Record)")
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Len(Text)",
+                                   signature="Public Sub M_Test_A(ByRef Text As String)")
+        self.assertFinding(findings, "use VBA.Len instead of Len")
+
+    def test_several_names_on_one_line_each_warn(self) -> None:
+        findings = self.statements("Result = UCase$(Trim$(Text)) & Len(Text)")
+        for name in ("UCase$", "Trim$", "Len"):
+            self.assertFinding(findings, f"use VBA.{name} instead of {name}")
+
+    def test_qualification_findings_do_not_change_errors(self) -> None:
+        findings = self.statements("Result = Len(Text)")
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Select Case and local names.
+    def test_select_case_without_case_else_warns(self) -> None:
+        findings = self.statements("Select Case Count", "    Case 1", "        Debug.Print 1",
+                                   "End Select")
+        self.assertFinding(findings, "WARN Select Case without Case Else")
+
+    def test_select_case_with_case_else_is_silent(self) -> None:
+        findings = self.statements("Select Case Count", "    Case 1: Debug.Print 1",
+                                   "    Case Else", "        Debug.Print 2", "End Select")
+        self.assertNoFinding(findings, "Case Else")
+
+    def test_nested_select_case_is_matched_to_its_own_end(self) -> None:
+        inner_missing = ["Select Case Count", "    Case 1",
+                         "        Select Case Total", "            Case 2",
+                         "        End Select", "    Case Else", "End Select"]
+        findings = self.statements(*inner_missing)
+        self.assertEqual(sum("Case Else" in f for f in findings), 1, findings)
+        outer_missing = ["Select Case Count", "    Case 1",
+                         "        Select Case Total", "            Case Else",
+                         "        End Select", "End Select"]
+        findings = self.statements(*outer_missing)
+        self.assertEqual(sum("Case Else" in f for f in findings), 1, findings)
+        both = ["Select Case Count", "    Case 1", "        Select Case Total",
+                "            Case Else", "        End Select", "    Case Else", "End Select"]
+        self.assertNoFinding(self.statements(*both), "Case Else")
+
+    def test_hungarian_local_warns(self) -> None:
+        for name in ("strName", "lngCount", "intIndex", "objShape", "blnDone",
+                     "dblRate", "varValue", "rngData", "wsData", "wbBook"):
+            with self.subTest(name=name):
+                findings = self.statements(f"Dim {name} As Variant")
+                self.assertFinding(findings, f"WARN local variable {name} has a Hungarian prefix")
+
+    def test_local_that_is_not_pascal_case_warns(self) -> None:
+        findings = self.statements("Dim Total As Long, shapeIndex As Long",
+                                   "Static Shape_Count As Long")
+        self.assertFinding(findings, "local variable shapeIndex is not PascalCase")
+        self.assertFinding(findings, "local variable Shape_Count is not PascalCase")
+        self.assertNoFinding(findings, "local variable Total")
+
+    def test_words_constants_module_members_and_parameters_are_silent(self) -> None:
+        findings = self.statements("Dim Strength As Long", "Dim Intent As String",
+                                   "Dim Variance As Double, Items() As String",
+                                   "Const MAX_ITEMS As Long = 10",
+                                   signature="Private Sub mLabel_Click(ByVal strButton As Long)")
+        self.assertNoFinding(findings, "local variable")
+        decl = ["Private mName As String", "Public gCount As Long",
+                "Private Const MAX_COUNT As Long = 5", "Dim mTotal As Long", ""]
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        self.assertNoFinding(self.run_check(module("M_Test", decl + proc)), "local variable")
+
+    def test_select_and_naming_findings_do_not_change_errors(self) -> None:
+        findings = self.statements("Dim strName As String", "Select Case strName", "End Select")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Tokenizer.
+    def kinds(self, line: str) -> list[tuple[str, str]]:
+        return cvs.tokenize(line)
+
+    def test_tokens_join_back_to_the_line(self) -> None:
+        for line in ['A = "x: y" \'note', "Print #1, V: Print #2, W", "X = #1/2/2026# ' d",
+                     'Msg = "say ""hi"""', "A = 1: Rem note", "Remainder = 1", ""]:
+            self.assertEqual("".join(t for _, t in self.kinds(line)), line)
+
+    def test_token_kinds(self) -> None:
+        self.assertEqual(self.kinds('X = "a" \'c'), [
+            (cvs.CODE, "X = "), (cvs.STRING, '"a"'), (cvs.CODE, " "), (cvs.COMMENT, "'c")])
+        self.assertEqual(self.kinds("D = #1/2/2026#"), [
+            (cvs.CODE, "D = "), (cvs.DATE, "#1/2/2026#")])
+
+    def test_apostrophe_inside_a_string_is_not_a_comment(self) -> None:
+        self.assertEqual(self.kinds('M = "it\'s"'), [
+            (cvs.CODE, "M = "), (cvs.STRING, '"it\'s"')])
+        self.assertNoFinding(self.statements('Message = "it\'s: fine"'), "statement separator")
+
+    def test_doubled_quotes_stay_in_one_string(self) -> None:
+        self.assertEqual(self.kinds('M = "say ""hi"": ok"')[1], (cvs.STRING, '"say ""hi"": ok"'))
+
+    def test_rem_after_colon_is_a_comment(self) -> None:
+        self.assertEqual(self.kinds("A = 1: Rem note: x"), [
+            (cvs.CODE, "A = 1: "), (cvs.COMMENT, "Rem note: x")])
+        self.assertEqual(self.kinds("Remainder = 1"), [(cvs.CODE, "Remainder = 1")])
+        self.assertEqual(self.kinds("Total = Remainder"), [(cvs.CODE, "Total = Remainder")])
+
+    def test_file_numbers_in_open_input_close_are_code(self) -> None:
+        line = 'Open Path For Input As #1: Input #1, A: Close #1'
+        self.assertEqual(self.kinds(line), [(cvs.CODE, line)])
+        self.assertFinding(self.statements(line), "statement separator")
+
+    def test_comment_text_counts_in_full_for_line_length(self) -> None:
+        line = "    X = 1 '" + 'say "' + "y" * 120 + '"'
+        self.assertFinding(self.run_check(module("M_Test", [line])), "WARN line is")
+
+    def test_rem_trailing_a_declaration_is_exempt_from_line_length(self) -> None:
+        line = "    Private mIsBusy" + " " * 20 + "As Boolean" + " " * 5 + ": Rem " + "y" * 100
+        self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
 
     # --fix.
     def test_fix_changes_whitespace_only(self) -> None:

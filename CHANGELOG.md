@@ -3,7 +3,39 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.3.0] - 2026-11-21
+
+### Added
+
+- Checker: WARN findings for procedure body sections: local variables or an
+  error handler without a `DECLARE` section, `DECLARE` not starting with
+  `Const PROC_NAME As String = "<Component>.<Procedure>"` (or naming another
+  procedure), the first `On Error GoTo` outside `INITIALIZE`, the error label
+  not at column 0, sections out of order (`DECLARE`, `INITIALIZE`, task
+  sections, `EXIT PROCEDURE`, `ERROR HANDLER`), and no clean exit in
+  `EXIT PROCEDURE` before the error label (#7). One-line procedures and
+  compact `Private` procedures are exempt. Exit code and `--fix` are
+  unchanged.
+- Checker: WARN for VBA library calls written without `VBA.` (`Len`, `Trim$`,
+  `UCase$`, `InStr`, `CStr`...; the list is `VBA_QUALIFIED`) (#8). Members,
+  names the file declares, the `Mid$` statement, the `Len =` clause of `Open`
+  and `Len` / `LenB` of a user-defined type, an object or a `With` member
+  (`Item.Inner`, `.Inner`) are not reported. No `--fix`.
+- Checker: WARN for a `Select Case` without `Case Else` (nested blocks
+  matched to their own `End Select`) and for a local variable (`Dim` or
+  `Static` inside a procedure) with a Hungarian prefix (`strName`, `wsData`)
+  or a name that is not PascalCase (#9). Module-level variables, constants
+  and parameters are not checked; `Strength` and `Intent` are not reported.
+  No `--fix`.
+
+### Changed
+
+- Checker: one tokenizer (code, string, date literal, comment) now feeds every
+  statement rule, replacing the per-rule regular expressions. What the rules
+  report on valid VBA is unchanged (#6). Two edge cases follow the new
+  classification: a comment (apostrophe or `Rem`) counts in full toward the
+  line-length limit, even when it quotes text, and a `Rem` after a
+  declaration is exempt like an apostrophe comment.
 
 ## [1.2.0] - 2026-11-21
 

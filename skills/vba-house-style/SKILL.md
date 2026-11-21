@@ -24,7 +24,14 @@ ones.
    warns on statement-level slips: `Next` without its counter, `:` between
    statements, `InStr` / `StrComp` without a compare mode, parameters
    without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
-   where `vbNullString` is expected.
+   where `vbNullString` is expected, VBA library calls written without
+   `VBA.` (the list of section 7), `Select Case` without `Case Else`, and
+   local variables with a Hungarian prefix or a name that is not
+   PascalCase. It also checks the body sections of
+   section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
+   in `INITIALIZE`, the error label at column 0, the section order, and the
+   clean exit in `EXIT PROCEDURE` before the label. One-line procedures and
+   compact `Private` procedures are exempt.
 3. Reformat by hand following the rules below. Formatting is **behavior
    preserving**: never rename public members, change signatures, reorder
    `Attribute` lines, alter string literals, or change logic. If a rule would
@@ -256,7 +263,13 @@ Capture `Err` before any other call; raise custom errors as
 - Qualify VBA library calls: `VBA.Len`, `VBA.Trim$`, `VBA.UCase$`,
   `VBA.InStr`, `VBA.CStr`, `VBA.vbNullString`... Prefer the `$` string
   variants. Use `VBA.LenB(x) = 0` or `VBA.Len(x) = 0` for empty checks, and
-  `vbNullString` rather than `""`.
+  `vbNullString` rather than `""`. The checker reports the names in
+  `VBA_QUALIFIED` (`scripts/check_vba_style.py`) when they are written bare,
+  except a member (`Item.Len`), a name the file declares itself, the `Mid$`
+  statement, the `Len =` clause of `Open`, and `Len` / `LenB` of an
+  expression that starts with a variable declared as a user-defined type or
+  object (`Item`, `Item.Inner`) or with a `With` member. A function with the same name
+  in another module is not seen: ignore the warning there.
 - Explicit compare mode in `InStr` / `StrComp` (`vbBinaryCompare` or
   `vbTextCompare`).
 - `Next` always names its counter (`Next CharIndex`, `Next Ctl`).
@@ -267,8 +280,16 @@ Capture `Err` before any other call; raise custom errors as
   on the first line and the message on the next.
 - Local variables: PascalCase, descriptive (`NormalizedHoverMode`,
   `ShapeIndex`), no Hungarian prefixes; object variables released with
-  `Set x = Nothing` in the exit/cleanup path.
-- `Select Case` with `Case Else` whenever unexpected values matter.
+  `Set x = Nothing` in the exit/cleanup path. The checker reports a `Dim` or
+  `Static` inside a procedure whose name is not PascalCase (`shapeIndex`,
+  `Shape_Index`, a bare `i`) or starts with a lower-case `str`, `lng`,
+  `int`, `obj`, `bln`, `dbl`, `var`, `rng`, `ws` or `wb` followed by a
+  capital (`strName`); `Strength` and `Intent` are words. Module-level
+  variables, constants and parameters are not checked. Whether a name is
+  descriptive is left to the reviewer.
+- `Select Case` with `Case Else` whenever unexpected values matter. The
+  checker reports every `Select Case` without one (nested blocks are matched
+  to their own `End Select`); add `Case Else` or name the exception.
 - Keep lines readable (aim for 100 characters, hard limit 120). String
   literal contents and the trailing comment of an aligned declaration do not
   count toward the limit; the code around them does.
