@@ -29,7 +29,6 @@ PROC_RE = re.compile(
 END_RE = re.compile(r"^End\s+(Sub|Function|Property)\b", re.I)
 BANNER_RE = re.compile(r"^'[-=]{5,}\s*$")
 LABEL_RE = re.compile(r"' [A-Z][A-Z /]+")
-STRING_RE = re.compile(r'"(?:[^"]|"")*"')
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
@@ -39,7 +38,7 @@ DECL_RE = re.compile(
 DATE_RE = re.compile(
     r"#\s*(?:\d[\d/\-.:, ]*|[A-Za-z]{3,9}\.?\s+\d[\d,: ]*)"
     r"(?:\s*[AaPp][Mm])?\s*#")
-REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
+REM_RE = re.compile(r"Rem\b", re.I)
 COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
 NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)
 # Attribute records are VBE-managed export metadata, not statements.
@@ -64,13 +63,89 @@ def code_start(lines: list[str]) -> int:
     return 0
 
 
+CODE, STRING, DATE, COMMENT = "code", "string", "date", "comment"
+Token = tuple[str, str]
+
+
+def tokenize(line: str) -> list[Token]:
+    """Split one physical line into (kind, text) tokens: code, string
+    literal ("" escapes), date literal, comment (apostrophe, or Rem at the
+    start of a statement). Joined, the texts give back the line. Every
+    statement rule reads these tokens, never the raw text."""
+    tokens: list[Token] = []
+    code: list[str] = []
+    stmt_start = True
+    i, n = 0, len(line)
+
+    def flush() -> None:
+        if code:
+            tokens.append((CODE, "".join(code)))
+            code.clear()
+
+    while i < n:
+        ch = line[i]
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if line[j] == '"':
+                    if j + 1 < n and line[j + 1] == '"':
+                        j += 2
+                        continue
+                    break
+                j += 1
+            end = min(j + 1, n)
+            flush()
+            tokens.append((STRING, line[i:end]))
+            i, stmt_start = end, False
+            continue
+        if ch == "'":
+            flush()
+            tokens.append((COMMENT, line[i:]))
+            return tokens
+        if ch == "#":
+            m = DATE_RE.match(line, i)
+            if m:
+                flush()
+                tokens.append((DATE, m.group()))
+                i, stmt_start = m.end(), False
+                continue
+        if stmt_start and ch in "Rr" and REM_RE.match(line, i):
+            flush()
+            tokens.append((COMMENT, line[i:]))
+            return tokens
+        if ch == ":":
+            stmt_start = True
+        elif not ch.isspace():
+            stmt_start = False
+        code.append(ch)
+        i += 1
+    flush()
+    return tokens
+
+
+def code_view(tokens: list[Token]) -> str:
+    """The code of a line for the statement rules: non-empty strings become
+    "S", empty ones stay "", date literals become #D#, comments are dropped."""
+    out = []
+    for kind, text in tokens:
+        if kind == CODE:
+            out.append(text)
+        elif kind == STRING:
+            out.append('""' if text == '""' else '"S"')
+        elif kind == DATE:
+            out.append("#D#")
+    return "".join(out).rstrip()
+
+
 def code_length(line: str) -> int:
     """Length of a line without string-literal contents and, for a
     declaration, without its trailing comment (tables and long literals are
     exempt from the line limit; the code around them is not)."""
-    bare = STRING_RE.sub('""', line)
-    if DECL_RE.match(bare) and "'" in bare:
-        bare = bare[:bare.index("'")].rstrip()
+    tokens = tokenize(line)
+    bare = "".join('""' if kind == STRING else text for kind, text in tokens)
+    if DECL_RE.match(bare) and any(kind == COMMENT for kind, _ in tokens):
+        bare = "".join('""' if kind == STRING else text for kind, text in tokens
+                       if kind != COMMENT).rstrip()
     return len(bare)
 
 
@@ -195,28 +270,16 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
     return out
 
 
-def scrub(line: str) -> str:
-    """Code of one physical line: non-empty string literals become "S",
-    empty ones stay "", date literals become #D#, and a trailing comment
-    (apostrophe or Rem) is cut off."""
-    bare = STRING_RE.sub(lambda m: '""' if m.group(0) == '""' else '"S"', line)
-    bare = DATE_RE.sub("#D#", bare)
-    bare = REM_RE.sub("", bare)
-    if "'" in bare:
-        bare = bare[:bare.index("'")]
-    return bare.rstrip()
-
-
 def logical_lines(lines: list[str], start: int) -> list[tuple[int, str]]:
     """(first line number, code) per statement line, with continuation lines
     joined. Comment-only and blank lines give empty code."""
     out: list[tuple[int, str]] = []
     n = start
     while n < len(lines):
-        first, code = n + 1, scrub(lines[n])
+        first, code = n + 1, code_view(tokenize(lines[n]))
         while code.endswith(" _") and n + 1 < len(lines):
             n += 1
-            code = code[:-1] + " " + scrub(lines[n]).strip()
+            code = code[:-1] + " " + code_view(tokenize(lines[n])).strip()
         out.append((first, code))
         n += 1
     return out

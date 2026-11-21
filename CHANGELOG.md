@@ -5,6 +5,15 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Changed
+
+- Checker: one tokenizer (code, string, date literal, comment) now feeds every
+  statement rule, replacing the per-rule regular expressions. What the rules
+  report on valid VBA is unchanged (#6). Two edge cases follow the new
+  classification: a comment (apostrophe or `Rem`) counts in full toward the
+  line-length limit, even when it quotes text, and a `Rem` after a
+  declaration is exempt like an apostrophe comment.
+
 ## [1.2.0] - 2026-11-21
 
 ### Added

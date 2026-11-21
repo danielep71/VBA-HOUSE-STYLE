@@ -289,6 +289,48 @@ class CheckerTest(unittest.TestCase):
         findings = self.statements("Next", "A = 1: B = 2")
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # Tokenizer.
+    def kinds(self, line: str) -> list[tuple[str, str]]:
+        return cvs.tokenize(line)
+
+    def test_tokens_join_back_to_the_line(self) -> None:
+        for line in ['A = "x: y" \'note', "Print #1, V: Print #2, W", "X = #1/2/2026# ' d",
+                     'Msg = "say ""hi"""', "A = 1: Rem note", "Remainder = 1", ""]:
+            self.assertEqual("".join(t for _, t in self.kinds(line)), line)
+
+    def test_token_kinds(self) -> None:
+        self.assertEqual(self.kinds('X = "a" \'c'), [
+            (cvs.CODE, "X = "), (cvs.STRING, '"a"'), (cvs.CODE, " "), (cvs.COMMENT, "'c")])
+        self.assertEqual(self.kinds("D = #1/2/2026#"), [
+            (cvs.CODE, "D = "), (cvs.DATE, "#1/2/2026#")])
+
+    def test_apostrophe_inside_a_string_is_not_a_comment(self) -> None:
+        self.assertEqual(self.kinds('M = "it\'s"'), [
+            (cvs.CODE, "M = "), (cvs.STRING, '"it\'s"')])
+        self.assertNoFinding(self.statements('Message = "it\'s: fine"'), "statement separator")
+
+    def test_doubled_quotes_stay_in_one_string(self) -> None:
+        self.assertEqual(self.kinds('M = "say ""hi"": ok"')[1], (cvs.STRING, '"say ""hi"": ok"'))
+
+    def test_rem_after_colon_is_a_comment(self) -> None:
+        self.assertEqual(self.kinds("A = 1: Rem note: x"), [
+            (cvs.CODE, "A = 1: "), (cvs.COMMENT, "Rem note: x")])
+        self.assertEqual(self.kinds("Remainder = 1"), [(cvs.CODE, "Remainder = 1")])
+        self.assertEqual(self.kinds("Total = Remainder"), [(cvs.CODE, "Total = Remainder")])
+
+    def test_file_numbers_in_open_input_close_are_code(self) -> None:
+        line = 'Open Path For Input As #1: Input #1, A: Close #1'
+        self.assertEqual(self.kinds(line), [(cvs.CODE, line)])
+        self.assertFinding(self.statements(line), "statement separator")
+
+    def test_comment_text_counts_in_full_for_line_length(self) -> None:
+        line = "    X = 1 '" + 'say "' + "y" * 120 + '"'
+        self.assertFinding(self.run_check(module("M_Test", [line])), "WARN line is")
+
+    def test_rem_trailing_a_declaration_is_exempt_from_line_length(self) -> None:
+        line = "    Private mIsBusy" + " " * 20 + "As Boolean" + " " * 5 + ": Rem " + "y" * 100
+        self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
+
     # --fix.
     def test_fix_changes_whitespace_only(self) -> None:
         raw = b'Attribute VB_Name = "M_Test"\nOption Explicit  \n\tDim A As Long\t\n'
