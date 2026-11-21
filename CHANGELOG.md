@@ -5,6 +5,18 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Added
+
+- Checker: WARN findings for procedure body sections: local variables or an
+  error handler without a `DECLARE` section, `DECLARE` not starting with
+  `Const PROC_NAME As String = "<Component>.<Procedure>"` (or naming another
+  procedure), the first `On Error GoTo` outside `INITIALIZE`, the error label
+  not at column 0, sections out of order (`DECLARE`, `INITIALIZE`, task
+  sections, `EXIT PROCEDURE`, `ERROR HANDLER`), and no clean exit in
+  `EXIT PROCEDURE` before the error label (#7). One-line procedures and
+  compact `Private` procedures are exempt. Exit code and `--fix` are
+  unchanged.
+
 ### Changed
 
 - Checker: one tokenizer (code, string, date literal, comment) now feeds every
