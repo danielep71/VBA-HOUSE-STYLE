@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎨 vba-house-style
+# 🎨 VBA-HOUSE-STYLE
 
 **One skill, one style: exported VBA that reads the same in every repository.**
 
