@@ -4,7 +4,7 @@
 
 **One skill, one style: exported VBA that reads the same in every repository.**
 
-[![Plugin](https://img.shields.io/badge/plugin-v1.1.0-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
+[![Plugin](https://img.shields.io/badge/plugin-v1.1.1-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
 [![VBA](https://img.shields.io/badge/VBA-.bas%20%C2%B7%20.cls%20%C2%B7%20.frm-217346?style=for-the-badge)](skills/vba-house-style/references/M_Example.bas)
 [![Python](https://img.shields.io/badge/python-3%20%C2%B7%20stdlib%20only-3776AB?style=for-the-badge&logo=python&logoColor=white)](skills/vba-house-style/scripts/check_vba_style.py)
 [![EOL](https://img.shields.io/badge/line%20endings-CRLF-555555?style=for-the-badge)](.gitattributes)
