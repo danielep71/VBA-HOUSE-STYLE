@@ -94,6 +94,15 @@ LOCAL_VAR_RE = re.compile(r"(?:Dim|Static)\s+(.*)$", re.I)
 # (strName, wsData). Case-sensitive, so Strength and Intent are words.
 HUNGARIAN_RE = re.compile(r"(str|lng|int|obj|bln|dbl|var|rng|ws|wb)[A-Z]")
 PASCAL_RE = re.compile(r"[A-Z][A-Za-z0-9]*$")
+VISIBILITY_RE = re.compile(r"(?:Public|Private|Friend)\s", re.I)
+CONST_STMT_RE = re.compile(r"(?:(?:Public|Private|Global)\s+)?Const\s+(.*)$", re.I)
+UPPER_SNAKE_RE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
+# A one-line declaration whose "As" is aligned with its neighbours (group 1).
+# The modifier is required, so Type members, Enum members and Declare
+# statements never match.
+ALIGN_DECL_RE = re.compile(
+    r"\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+(?:Const\s+)?|Const\s+)"
+    r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+(As)\s+", re.I)
 
 
 def code_start(lines: list[str]) -> int:
@@ -360,6 +369,11 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
     # Procedures: header fields in order, spacing between procedures, body
     # sections.
     component = names[0] if names else path.stem
+    first_proc = next((n for n in range(start, len(lines))
+                       if PROC_RE.match(lines[n]) and not lines[n].lstrip().startswith("'")),
+                      len(lines))
+    for line_no, msg in alignment_problems(lines, start, first_proc):
+        add("WARN", line_no, msg)
     statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
     i = start
     while i < len(lines):
@@ -406,6 +420,12 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             for line_no, msg in body_problems(lines, stmts, first, end,
                                               f"{component}.{name}", kind):
                 add("WARN", line_no, f"{name}: {msg}")
+            sections = body_sections(lines, first, end)
+            for pos, (title, at) in enumerate(sections):
+                if title == "DECLARE":
+                    stop = sections[pos + 1][1] if pos + 1 < len(sections) else end
+                    for line_no, msg in alignment_problems(lines, at, stop):
+                        add("WARN", line_no, f"{name}: {msg}")
         i = end + 1
     out += statement_findings(lines, start)
     return out
@@ -599,16 +619,12 @@ def unqualified_calls(code: str, declared: set[str],
     return found
 
 
-def block_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
-    """Select Case blocks without Case Else, and local variables (Dim or
-    Static inside a procedure) with a Hungarian prefix or a name that is not
-    PascalCase, as (line number, message). Module-level variables,
-    constants and parameters are not local variables."""
-    out: list[tuple[int, str]] = []
-    selects: list[list] = []        # [line number, has Case Else] per open block
+def scoped_parts(statements: list[tuple[int, str]]):
+    """(line number, statement, inside a procedure) per statement. A line is
+    split at ":" (not ":="; strings are masked). The signature counts as
+    inside the procedure, the End line as outside."""
     in_proc = False
     for n, code in statements:
-        # One entry per statement: split at ":" (not ":="; strings are masked).
         for part in re.split(r":(?!=)", code):
             part = part.strip()
             if not part:
@@ -617,27 +633,92 @@ def block_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
                 in_proc = True
             elif END_RE.match(part):
                 in_proc = False
-            if SELECT_RE.match(part):
-                selects.append([n, False])
-            elif CASE_ELSE_RE.match(part) and selects:
-                selects[-1][1] = True
-            elif END_SELECT_RE.match(part) and selects:
-                line_no, has_else = selects.pop()
-                if not has_else:
-                    out.append((line_no, "Select Case without Case Else"))
-            m = LOCAL_VAR_RE.match(part) if in_proc else None
-            if m:
-                for decl in split_args(m.group(1)):
-                    name = re.match(r"\s*(?:WithEvents\s+)?([A-Za-z]\w*)", decl, re.I)
-                    if not name:
-                        continue
-                    name = name.group(1)
-                    prefix = HUNGARIAN_RE.match(name)
-                    if prefix:
-                        out.append((n, f"local variable {name} has a Hungarian prefix "
-                                       f"({prefix.group(1)})"))
-                    elif not PASCAL_RE.match(name):
-                        out.append((n, f"local variable {name} is not PascalCase"))
+            yield n, part, in_proc
+
+
+def block_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Select Case blocks without Case Else, and local variables (Dim or
+    Static inside a procedure) with a Hungarian prefix or a name that is not
+    PascalCase, as (line number, message). Module-level variables,
+    constants and parameters are not local variables."""
+    out: list[tuple[int, str]] = []
+    selects: list[list] = []        # [line number, has Case Else] per open block
+    for n, part, in_proc in scoped_parts(statements):
+        if SELECT_RE.match(part):
+            selects.append([n, False])
+        elif CASE_ELSE_RE.match(part) and selects:
+            selects[-1][1] = True
+        elif END_SELECT_RE.match(part) and selects:
+            line_no, has_else = selects.pop()
+            if not has_else:
+                out.append((line_no, "Select Case without Case Else"))
+        m = LOCAL_VAR_RE.match(part) if in_proc else None
+        if m:
+            for decl in split_args(m.group(1)):
+                name = re.match(r"\s*(?:WithEvents\s+)?([A-Za-z]\w*)", decl, re.I)
+                if not name:
+                    continue
+                name = name.group(1)
+                prefix = HUNGARIAN_RE.match(name)
+                if prefix:
+                    out.append((n, f"local variable {name} has a Hungarian prefix "
+                                   f"({prefix.group(1)})"))
+                elif not PASCAL_RE.match(name):
+                    out.append((n, f"local variable {name} is not PascalCase"))
+    return sorted(out)
+
+
+def const_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Module-level constants whose name is not UPPER_SNAKE_CASE, as (line
+    number, message). Constants inside a procedure are not checked."""
+    out: list[tuple[int, str]] = []
+    for n, part, in_proc in scoped_parts(statements):
+        m = None if in_proc else CONST_STMT_RE.match(part)
+        for decl in split_args(m.group(1)) if m else []:
+            name = re.match(r"([A-Za-z]\w*)[%&^!#@$]?", decl)
+            if name and not UPPER_SNAKE_RE.match(name.group(1)):
+                out.append((n, f"constant {name.group(1)} is not UPPER_SNAKE_CASE"))
+    return out
+
+
+def alignment_problems(lines: list[str], first: int, last: int) -> list[tuple[int, str]]:
+    """Declarations in lines[first:last] whose "As" or trailing comment is not
+    in the column of the first declaration of their group, as (line number,
+    message). A group is a run of consecutive one-line declarations; a blank
+    line, a comment line, a statement or a continued line ends it. One
+    finding per group and kind."""
+    groups: list[list[int]] = []
+    run: list[int] = []
+    continued = False
+    for n in range(first, last):
+        wraps = code_view(tokenize(lines[n])).endswith(" _")
+        if not continued and not wraps and ALIGN_DECL_RE.match(lines[n]):
+            run.append(n)
+        elif run:
+            groups.append(run)
+            run = []
+        continued = wraps
+    if run:
+        groups.append(run)
+    out: list[tuple[int, str]] = []
+    for run in groups:
+        as_cols = [ALIGN_DECL_RE.match(lines[n]).start(1) for n in run]
+        cmt_cols = {}
+        for n in run:
+            at = 0
+            for kind, text in tokenize(lines[n]):
+                if kind == COMMENT and text.startswith("'"):
+                    cmt_cols[n] = at
+                at += len(text)
+        for label, cols in (("As", dict(zip(run, as_cols))),
+                            ("trailing comment", cmt_cols)):
+            if not cols:
+                continue
+            ref = cols[min(cols)]
+            bad = next((n for n in sorted(cols) if cols[n] != ref), None)
+            if bad is not None:
+                out.append((bad + 1, f"{label} is not aligned with its group "
+                                     f"(column {cols[bad] + 1}, expected {ref + 1})"))
     return sorted(out)
 
 
@@ -675,7 +756,10 @@ def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str
         if m:
             for problem in signature_problems(code, m):
                 out.append(("WARN", n, f"{m.group(2)}: {problem}"))
+            if not VISIBILITY_RE.match(code):
+                out.append(("WARN", n, f"{m.group(2)}: no Public, Private or Friend"))
     out += [("WARN", n, msg) for n, msg in block_findings(statements)]
+    out += [("WARN", n, msg) for n, msg in const_findings(statements)]
     return out
 
 

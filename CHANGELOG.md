@@ -3,6 +3,21 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+
+- Checker: WARN for a `Sub`, `Function` or `Property` signature without
+  `Public`, `Private` or `Friend` (`Static` alone does not count), for a
+  module-level `Const` whose name is not `UPPER_SNAKE_CASE` (constants inside
+  a procedure are not checked), and for declarations whose `As` or trailing
+  `'comment` is not in the column of the first declaration of their group
+  (#15). A group is a run of consecutive one-line declarations in the module
+  top or in a procedure `DECLARE` section; a blank line, a comment, a
+  statement or a continued line ends it. `Declare`, `Enum` and `Type`
+  members and conditional-compilation lines are not groups. One finding per
+  group and kind. Exit code and `--fix` are unchanged.
+
 ## [1.3.0] - 2026-11-21
 
 ### Added
