@@ -22,6 +22,15 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests -v
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Self-test the label scripts
+        run: |
+          node .github/scripts/labels-sync.mjs --self-test
+          node .github/scripts/labels-drift.mjs --self-test
+
       - name: Style check of the worked example
         run: python skills/vba-house-style/scripts/check_vba_style.py skills/vba-house-style/references
 

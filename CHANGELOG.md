@@ -3,6 +3,14 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+
+- Issue label catalogue (`.github/labels.json`, 20 labels) with the sync and
+  drift workflows and a guide, `docs/ISSUE_LABELS.md`, aligned with K-TEMPLATE.
+  No plugin change, so no version bump.
+
 ## [1.1.1] - 2026-11-21
 
 ### Changed
