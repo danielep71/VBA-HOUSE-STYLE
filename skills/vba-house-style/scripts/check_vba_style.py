@@ -33,7 +33,12 @@ STRING_RE = re.compile(r'"(?:[^"]|"")*"')
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
-DATE_RE = re.compile(r"#[^#'\"]*\d[^#'\"]*#")
+# A date/time literal holds only digits, date and time separators, an AM/PM
+# marker or a month name. Anything else between two "#" is file-number syntax
+# (Print #1, A: Print #2, B), not a literal.
+DATE_RE = re.compile(
+    r"#\s*(?:\d[\d/\-.:, ]*|[A-Za-z]{3,9}\.?\s+\d[\d,: ]*)"
+    r"(?:\s*[AaPp][Mm])?\s*#")
 REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
 COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
 NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)

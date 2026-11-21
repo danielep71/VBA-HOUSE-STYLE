@@ -224,6 +224,17 @@ class CheckerTest(unittest.TestCase):
                                    "Deadline = #12:30:00 PM#", "Deadline = #1/2/2026#")
         self.assertNoFinding(findings, "statement separator")
 
+    def test_file_number_markers_are_not_a_date_literal(self) -> None:
+        findings = self.statements("Print #1, Value: Print #2, OtherValue")
+        self.assertFinding(findings, "statement separator")
+        findings = self.statements("Print #1, VBA.StrComp(A, B): Print #2, C")
+        self.assertFinding(findings, "StrComp without an explicit compare mode")
+
+    def test_month_name_date_literal_is_not_a_separator(self) -> None:
+        findings = self.statements("Deadline = #January 5, 2026 9:30 AM#",
+                                   "Deadline = #2026-01-05 09:30:00#")
+        self.assertNoFinding(findings, "statement separator")
+
     def test_rem_comment_is_not_code(self) -> None:
         findings = self.statements("Rem Example: VBA.StrComp(A, B)", "Rem Next",
                                    "Remainder = 1")
