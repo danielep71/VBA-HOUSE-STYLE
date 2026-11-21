@@ -410,6 +410,69 @@ class CheckerTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # VBA. qualification.
+    def test_each_unqualified_library_call_warns(self) -> None:
+        for name in cvs.VBA_QUALIFIED:
+            with self.subTest(name=name):
+                findings = self.statements(f"Result = {name}(Text)")
+                self.assertFinding(findings, f"use VBA.{name} instead of {name}")
+
+    def test_each_name_is_silent_qualified_as_member_in_text_or_declared(self) -> None:
+        for name in cvs.VBA_QUALIFIED:
+            base = name.rstrip("$")
+            with self.subTest(name=name):
+                findings = self.statements(
+                    f"Result = VBA.{name}(Text)", f"Result = Item.{name}(Text)",
+                    f"Result = Item!{name}", f"Result = .{name}(Text)",
+                    f'Message = "{name}(Text)"', f"'{name}(Text)",
+                    f"Result = 1 ' {name}(Text)", f"Run {base}:=1")
+                self.assertNoFinding(findings, "use VBA.")
+                findings = self.statements(f"Dim {base} As Long", f"Result = {name}(1)")
+                self.assertNoFinding(findings, "use VBA.")
+
+    def test_names_declared_by_the_file_are_silent(self) -> None:
+        proc = procedure("Private Function Trim(ByVal Text As String) As String",
+                         ["PURPOSE", "UPDATED"])
+        decl = ["Private Declare PtrSafe Function CStr Lib \"x\" () As Long",
+                "Public Event LCase(ByVal Len As Long)",
+                "Private Enum E_Kind", "    CLng = 1", "End Enum",
+                "Private Type T_Item", "    CDbl As Double", "End Type", ""]
+        body = ["        Result = Trim$(Text) & Len(Text) & CStr() & CLng & CDbl"]
+        findings = self.run_check(module("M_Test", decl + proc[:-2] + body + proc[-2:]))
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Len(Text)",
+                                   signature="Public Sub M_Test_A(ByVal Len As Long)")
+        self.assertNoFinding(findings, "use VBA.")
+
+    def test_name_case_and_spelling_are_reported(self) -> None:
+        findings = self.statements("Result = ucase$(Text)")
+        self.assertFinding(findings, "use VBA.UCase$ instead of ucase$")
+
+    def test_mid_statement_and_bare_left_right_are_silent(self) -> None:
+        findings = self.statements('Mid$(Text, 1, 1) = "x"', 'If Ok Then Mid$(Text, 1) = "y"',
+                                   "Left = 10", "Result = Right(Text, 2)")
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Mid$(Text, 1, 1)")
+        self.assertFinding(findings, "use VBA.Mid$ instead of Mid$")
+
+    def test_open_len_clause_and_len_of_a_record_are_silent(self) -> None:
+        findings = self.statements("Dim Record As T_Record", "Dim Records(1 To 2) As T_Record",
+                                   "Open Path For Random As #1 Len = Len(Record)",
+                                   "Size = LenB(Records(1))")
+        self.assertNoFinding(findings, "use VBA.")
+        findings = self.statements("Result = Len(Text)",
+                                   signature="Public Sub M_Test_A(ByRef Text As String)")
+        self.assertFinding(findings, "use VBA.Len instead of Len")
+
+    def test_several_names_on_one_line_each_warn(self) -> None:
+        findings = self.statements("Result = UCase$(Trim$(Text)) & Len(Text)")
+        for name in ("UCase$", "Trim$", "Len"):
+            self.assertFinding(findings, f"use VBA.{name} instead of {name}")
+
+    def test_qualification_findings_do_not_change_errors(self) -> None:
+        findings = self.statements("Result = Len(Text)")
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # Tokenizer.
     def kinds(self, line: str) -> list[tuple[str, str]]:
         return cvs.tokenize(line)
