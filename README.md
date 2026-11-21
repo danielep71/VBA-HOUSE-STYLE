@@ -4,7 +4,7 @@
 
 **One skill, one style: exported VBA that reads the same in every repository.**
 
-[![Plugin](https://img.shields.io/badge/plugin-v1.1.1-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
+[![Plugin](https://img.shields.io/badge/plugin-v1.2.0-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
 [![VBA](https://img.shields.io/badge/VBA-.bas%20%C2%B7%20.cls%20%C2%B7%20.frm-217346?style=for-the-badge)](skills/vba-house-style/references/M_Example.bas)
 [![Python](https://img.shields.io/badge/python-3%20%C2%B7%20stdlib%20only-3776AB?style=for-the-badge&logo=python&logoColor=white)](skills/vba-house-style/scripts/check_vba_style.py)
 [![EOL](https://img.shields.io/badge/line%20endings-CRLF-555555?style=for-the-badge)](.gitattributes)
@@ -87,7 +87,7 @@ python skills\vba-house-style\scripts\check_vba_style.py --fix src\    # normali
 | Level | Flags |
 |---|---|
 | ❌ **ERROR** | not CRLF · missing final CRLF · `VB_Name` ≠ file name · no `Option Explicit` · tabs · trailing whitespace · banner ≠ 79 chars |
-| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 |
+| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 · `Next` without its counter · `:` between statements · `InStr` / `StrComp` without a compare mode · parameters without `ByVal`/`ByRef` or `As` · function without `As` · `= ""` instead of `vbNullString` |
 
 `--fix` touches whitespace and line endings only, never code, and skips the
 `.frm` designer block. The exit code is `1` while any error remains.
