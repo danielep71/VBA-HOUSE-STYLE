@@ -1,4 +1,4 @@
-# vba-house-style
+# VBA-HOUSE-STYLE
 
 Plugin with one skill that formats exported VBA source (`.bas`, `.cls`,
 `.frm`) in a fixed house style: 79-column banners, a nine-field documentation
