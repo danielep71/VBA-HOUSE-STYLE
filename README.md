@@ -8,7 +8,7 @@
 [![VBA](https://img.shields.io/badge/VBA-.bas%20%C2%B7%20.cls%20%C2%B7%20.frm-217346?style=for-the-badge)](skills/vba-house-style/references/M_Example.bas)
 [![Python](https://img.shields.io/badge/python-3%20%C2%B7%20stdlib%20only-3776AB?style=for-the-badge&logo=python&logoColor=white)](skills/vba-house-style/scripts/check_vba_style.py)
 [![EOL](https://img.shields.io/badge/line%20endings-CRLF-555555?style=for-the-badge)](.gitattributes)
-[![Private](https://img.shields.io/badge/repo-private-critical?style=for-the-badge&logo=github)](#)
+[![License](https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge)](LICENSE)
 
 [✨ Features](#-features) ·
 [👀 At a glance](#-the-style-at-a-glance) ·
@@ -113,8 +113,7 @@ python -m unittest discover -s tests
 ### ☁️ One-time setup on claude.ai
 
 **Customize > Plugins > Add > Add marketplace**, enter
-`danielep71/VBA-HOUSE-STYLE` (connect GitHub when asked, since the repo is
-private) and turn on **Sync automatically**. Then open the plugin
+`danielep71/VBA-HOUSE-STYLE` and turn on **Sync automatically**. Then open the plugin
 `vba-house-style` and press **Add**: until then it is only listed, not
 installed, and gets no updates. After each release, **Check for updates** pulls the new
 version.
@@ -147,5 +146,5 @@ Copy-Item "$env:TEMP\vba-house-style\skills\vba-house-style" $dest -Recurse -For
 ---
 
 <div align="center">
-<sub>🔒 Private · keep this skill out of public repositories</sub>
+<sub>MIT licensed · see <a href="LICENSE">LICENSE</a></sub>
 </div>

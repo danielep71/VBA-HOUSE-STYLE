@@ -8,8 +8,15 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 ### Added
 
 - Issue label catalogue (`.github/labels.json`, 20 labels) with the sync and
-  drift workflows and a guide, `docs/ISSUE_LABELS.md`, aligned with K-TEMPLATE.
-  No plugin change, so no version bump.
+  drift workflows and a guide, `docs/ISSUE_LABELS.md`.
+- `LICENSE` (MIT); the repository is now public.
+
+### Removed
+
+- `AGENTS.md` and `CLAUDE.md` (working instructions, kept out of the public
+  repository).
+
+No plugin change, so no version bump.
 
 ## [1.1.1] - 2026-11-21
 

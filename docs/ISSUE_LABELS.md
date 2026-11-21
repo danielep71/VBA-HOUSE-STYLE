@@ -2,8 +2,7 @@
 
 This repository defines 20 issue labels, each with a name, a description and a
 colour. `.github/labels.json` is the source of truth: change a label through a
-pull request, never in the GitHub UI. The catalogue follows the one of K-TEMPLATE;
-only the `P1` description differs, because this repository has no calculations.
+pull request, never in the GitHub UI. The `P1` description is specific to this repository: it covers checker defects.
 
 ## Automation
 
