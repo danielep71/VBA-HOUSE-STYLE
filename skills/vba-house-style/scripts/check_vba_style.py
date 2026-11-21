@@ -42,6 +42,8 @@ DATE_RE = re.compile(
 REM_RE = re.compile(r"(?:^|(?<=:))\s*Rem\b.*$", re.I)
 COMPARE_CONST_RE = re.compile(r"(?:VBA\.)?vb(?:Binary|Text|Database)Compare$", re.I)
 NAMED_COMPARE_RE = re.compile(r"Compare\s*:=", re.I)
+# Attribute records are VBE-managed export metadata, not statements.
+ATTRIBUTE_RE = re.compile(r"^Attribute\s+\w", re.I)
 LABEL_LINE_RE = re.compile(r"^\s*\w+:\s*$")
 COMPARE_CALL_RE = re.compile(r"(?<![\w.])(?:VBA\.)?(InStr|StrComp)\s*\(", re.I)
 EMPTY_COMPARE_RE = re.compile(r'(?:<>|=)\s*""|""\s*(?:<>|=)')
@@ -303,7 +305,7 @@ def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str
     """Statement-level conventions (SKILL.md section 7), as WARN findings."""
     out: list[tuple[str, int, str]] = []
     for n, code in logical_lines(lines, start):
-        if not code.strip():
+        if not code.strip() or ATTRIBUTE_RE.match(code):
             continue
         # Next names its counter.
         if NEXT_RE.match(code):

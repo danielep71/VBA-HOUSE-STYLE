@@ -235,6 +235,13 @@ class CheckerTest(unittest.TestCase):
                                    "Deadline = #2026-01-05 09:30:00#")
         self.assertNoFinding(findings, "statement separator")
 
+    def test_attribute_records_are_not_statements(self) -> None:
+        text = ('Attribute VB_Name = "M_Test"\r\nAttribute VB_Description = ""\r\n'
+                'Attribute VB_ProcData.VB_Invoke_Func = " \\n14"\r\nOption Explicit\r\n')
+        findings = self.run_check(text)
+        self.assertNoFinding(findings, "vbNullString")
+        self.assertNoFinding(findings, "statement separator")
+
     def test_rem_comment_is_not_code(self) -> None:
         findings = self.statements("Rem Example: VBA.StrComp(A, B)", "Rem Next",
                                    "Remainder = 1")
