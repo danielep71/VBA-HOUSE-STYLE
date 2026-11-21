@@ -61,6 +61,31 @@ PROC_NAME_RE = re.compile(r'\s*Const\s+PROC_NAME\s+As\s+String\s*=\s*"[^"]*"\s*$
 ON_ERROR_GOTO_RE = re.compile(r"\s*On\s+Error\s+GoTo\s+([A-Za-z]\w*)\s*$", re.I)
 LABEL_AT_RE = re.compile(r"(\s*)([A-Za-z]\w*):(?!=)")
 EXIT_PROC_RE = re.compile(r"\s*Exit\s+(?:Sub|Function|Property)\s*$", re.I)
+# VBA library functions that must be written VBA.<Name> (SKILL.md section 7).
+# Kept short on purpose: a name that a project may define itself is a false
+# positive. Left, Right and Mid appear only with "$": bare Left/Right are
+# UserForm and control properties, and Mid is also a statement.
+VBA_QUALIFIED = (
+    "Len", "LenB", "Trim", "Trim$", "LTrim", "LTrim$", "RTrim", "RTrim$",
+    "UCase", "UCase$", "LCase", "LCase$", "Left$", "Right$", "Mid$",
+    "InStr", "InStrRev", "StrComp",
+    "CStr", "CLng", "CInt", "CDbl", "CBool", "CDate",
+)
+VBA_NAME_RE = re.compile(
+    r"(?<![\w$])(" + "|".join(re.escape(n) for n in
+                              sorted(VBA_QUALIFIED, key=len, reverse=True))
+    + r")(?![\w$])", re.I)
+VBA_SPELLING = {n.lower(): n for n in VBA_QUALIFIED}
+DECLARE_STMT_RE = re.compile(
+    r"^(?:(?:Public|Private|Friend)\s+)?Declare\s+(?:PtrSafe\s+)?(?:Sub|Function)\s+(\w+)", re.I)
+EVENT_RE = re.compile(r"^(?:Public\s+)?Event\s+(\w+)", re.I)
+VAR_STMT_RE = re.compile(
+    r"^(?:(?:Public|Private|Global|Friend|Dim|Static)\s+|ReDim\s+(?:Preserve\s+)?)"
+    r"(?:Const\s+)?(.*)$|^Const\s+(.*)$", re.I)
+BLOCK_RE = re.compile(r"^(?:(?:Public|Private)\s+)?(Enum|Type)\s+(\w+)", re.I)
+AS_TYPE_RE = re.compile(r"\bAs\s+(?:New\s+)?(\w+)", re.I)
+SCALAR_TYPES = {"string", "variant", "long", "integer", "double", "single", "currency",
+                "date", "boolean", "byte", "longlong", "longptr", "decimal"}
 
 
 def code_start(lines: list[str]) -> int:
@@ -472,12 +497,111 @@ def signature_problems(code: str, m: re.Match[str]) -> list[str]:
     return problems
 
 
+def first_word(text: str) -> str | None:
+    """The identifier a declaration part starts with (after its modifiers)."""
+    text = re.sub(r"^(?:(?:Optional|ByVal|ByRef|ParamArray|WithEvents|Const)\s+)+",
+                  "", text.strip(), flags=re.I)
+    m = re.match(r"[A-Za-z]\w*", text)
+    return m.group().lower() if m else None
+
+
+def declared_names(statements: list[tuple[int, str]]) -> tuple[set[str], set[str]]:
+    """Lower-case names the file declares (procedures, Declare and Event
+    names, their parameters, variables and constants of any scope, Enum and
+    Type members), and the subset declared As a type that is not a VBA
+    scalar (a user-defined type or an object). A library name the file
+    declares is its own; Len of a user-defined type cannot be VBA.Len."""
+    names: set[str] = set()
+    records: set[str] = set()
+    block = False
+
+    def add(part: str) -> None:
+        word = first_word(part)
+        if not word:
+            return
+        names.add(word)
+        m = AS_TYPE_RE.search(part)
+        if m and m.group(1).lower() not in SCALAR_TYPES:
+            records.add(word)
+
+    # One entry per statement: a line may hold several, split at ":" (not
+    # ":="; strings are already masked).
+    parts = [part for _, code in statements for part in re.split(r":(?!=)", code)]
+    for code in parts:
+        code = code.strip()
+        if not code or ATTRIBUTE_RE.match(code):
+            continue
+        if block:
+            if re.match(r"End\s+(?:Enum|Type)\b", code, re.I):
+                block = False
+            else:
+                add(code)
+            continue
+        m = BLOCK_RE.match(code)
+        if m:
+            block = True
+            names.add(m.group(2).lower())
+            continue
+        m = PROC_RE.match(code) or DECLARE_STMT_RE.match(code) or EVENT_RE.match(code)
+        if m:
+            names.add(m.group(m.lastindex).lower())
+            open_at = code.find("(", m.end())
+            parsed = call_args(code, open_at) if open_at >= 0 else None
+            for param in parsed[0] if parsed else []:
+                add(param)
+            continue
+        m = VAR_STMT_RE.match(code)
+        if m:
+            for part in split_args(m.group(1) or m.group(2)):
+                add(part)
+    return names, records
+
+
+def unqualified_calls(code: str, declared: set[str],
+                      records: set[str]) -> list[tuple[str, str]]:
+    """Library names of VBA_QUALIFIED used bare in one statement's code, as
+    (listed spelling, written text). Not reported: a member (after "." or
+    "!"), a named argument or an Open ... Len = clause (followed by "=" or
+    ":="), a name the file declares, the Mid statement, and Len or LenB of an
+    expression that starts with a variable declared As a non-scalar type or
+    with a With member."""
+    found: list[tuple[str, str]] = []
+    for m in VBA_NAME_RE.finditer(code):
+        before = code[:m.start()].rstrip()
+        after = code[m.end():].lstrip()
+        if before.endswith((".", "!")) or after.startswith((":=", "=")):
+            continue
+        name = m.group(1)
+        if name.rstrip("$").lower() in declared:
+            continue
+        # The Mid statement (Mid$(Text, 1, 1) = "x") cannot be qualified. It
+        # starts a statement: at the line start, after ":" or Then / Else.
+        if name.lower() == "mid$" and re.search(r"(?:^|:|\b(?:Then|Else))$", before, re.I):
+            continue
+        if name.lower() in ("len", "lenb") and after.startswith("("):
+            parsed = call_args(after, 0)
+            # The argument's type is judged by its first name: a record or
+            # object there (Item, Item.Inner, Items(1).Inner) or a With
+            # member (.Inner) may be a user-defined type, so stay silent.
+            root = re.match(r"\.|[A-Za-z]\w*", parsed[0][0]) \
+                if parsed and len(parsed[0]) == 1 else None
+            if root and (root.group() == "." or root.group().lower() in records):
+                continue
+        found.append((VBA_SPELLING[name.lower()], name))
+    return found
+
+
 def statement_findings(lines: list[str], start: int) -> list[tuple[str, int, str]]:
     """Statement-level conventions (SKILL.md section 7), as WARN findings."""
     out: list[tuple[str, int, str]] = []
-    for n, code in logical_lines(lines, start):
+    statements = logical_lines(lines, start)
+    declared, records = declared_names(statements)
+    for n, code in statements:
         if not code.strip() or ATTRIBUTE_RE.match(code):
             continue
+        # VBA library calls qualified with VBA.
+        for name, written in unqualified_calls(code, declared, records):
+            out.append(("WARN", n, f"use VBA.{name} instead of {written}"))
         # Next names its counter.
         if NEXT_RE.match(code):
             out.append(("WARN", n, "Next without the counter name"))

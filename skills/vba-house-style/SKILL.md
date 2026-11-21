@@ -24,7 +24,8 @@ ones.
    warns on statement-level slips: `Next` without its counter, `:` between
    statements, `InStr` / `StrComp` without a compare mode, parameters
    without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
-   where `vbNullString` is expected. It also checks the body sections of
+   where `vbNullString` is expected, and VBA library calls written without
+   `VBA.` (the list of section 7). It also checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
    clean exit in `EXIT PROCEDURE` before the label. One-line procedures and
@@ -260,7 +261,13 @@ Capture `Err` before any other call; raise custom errors as
 - Qualify VBA library calls: `VBA.Len`, `VBA.Trim$`, `VBA.UCase$`,
   `VBA.InStr`, `VBA.CStr`, `VBA.vbNullString`... Prefer the `$` string
   variants. Use `VBA.LenB(x) = 0` or `VBA.Len(x) = 0` for empty checks, and
-  `vbNullString` rather than `""`.
+  `vbNullString` rather than `""`. The checker reports the names in
+  `VBA_QUALIFIED` (`scripts/check_vba_style.py`) when they are written bare,
+  except a member (`Item.Len`), a name the file declares itself, the `Mid$`
+  statement, the `Len =` clause of `Open`, and `Len` / `LenB` of an
+  expression that starts with a variable declared as a user-defined type or
+  object (`Item`, `Item.Inner`) or with a `With` member. A function with the same name
+  in another module is not seen: ignore the warning there.
 - Explicit compare mode in `InStr` / `StrComp` (`vbBinaryCompare` or
   `vbTextCompare`).
 - `Next` always names its counter (`Next CharIndex`, `Next Ctl`).
