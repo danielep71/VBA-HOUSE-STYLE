@@ -114,8 +114,9 @@ python -m unittest discover -s tests
 
 **Customize > Plugins > Add > Add marketplace**, enter
 `danielep71/VBA-HOUSE-STYLE` (connect GitHub when asked, since the repo is
-private), turn on **Sync automatically**, then turn on the plugin
-`vba-house-style`. After each release, **Check for updates** pulls the new
+private) and turn on **Sync automatically**. Then open the plugin
+`vba-house-style` and press **Add**: until then it is only listed, not
+installed, and gets no updates. After each release, **Check for updates** pulls the new
 version.
 
 ### 📦 Fallback: upload a ZIP
