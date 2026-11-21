@@ -101,7 +101,8 @@ python -m unittest discover -s tests
 
 1. ✏️ Change the skill under `skills/vba-house-style/`.
 2. 🔢 Raise `version` in `.claude-plugin/plugin.json` (for example 1.0.0 to
-   1.0.1) and the **plugin** badge at the top of this file.
+   1.0.1) and the **plugin** badge at the top of this file. The build stops
+   if the two differ.
 3. 📦 Build the ZIP (needs Python 3 and Git):
 
    ```powershell

@@ -5,7 +5,8 @@ Usage:
     python tools/build_plugin.py
 
 Writes dist/vba-house-style-plugin-<version>.zip, where <version> comes from
-.claude-plugin/plugin.json. The archive holds one top-level folder named after
+.claude-plugin/plugin.json; the build stops when the README plugin badge
+shows another version. The archive holds one top-level folder named after
 the plugin, containing .claude-plugin/plugin.json and skills/. Only files
 tracked by Git are included, so local scratch files never ship. Entry paths
 use forward slashes and keep each file's bytes as committed in the working
@@ -29,6 +30,14 @@ def main() -> int:
     name, version = manifest["name"], manifest["version"]
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         print(f"plugin.json version '{version}' is not MAJOR.MINOR.PATCH", file=sys.stderr)
+        return 1
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    badge = re.search(r"img\.shields\.io/badge/plugin-v([0-9.]+)-", readme)
+    if not badge or badge.group(1) != version:
+        found = badge.group(1) if badge else "none"
+        print(f"README plugin badge is v{found}, plugin.json is {version}: "
+              "raise both together", file=sys.stderr)
         return 1
 
     skill_md = ROOT / "skills" / name / "SKILL.md"
