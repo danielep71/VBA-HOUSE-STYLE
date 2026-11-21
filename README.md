@@ -104,15 +104,19 @@ python -m unittest discover -s tests
 2. 🔢 Raise `version` in `.claude-plugin/plugin.json` (for example 1.0.0 to
    1.0.1) and the **plugin** badge at the top of this file. The build stops
    if the two differ.
-3. 🔀 Merge into `main`. claude.ai picks up the new version from this repo
-   (see below); only a raised version reaches users.
+3. 🔀 Merge into `main`.
+4. 🔄 On claude.ai, **Manage marketplaces > Check for updates** to pull the
+   new version now; only a raised version reaches users.
+5. 🆕 Open a new session: a running session keeps the version it started
+   with.
 
 ### ☁️ One-time setup on claude.ai
 
 **Customize > Plugins > Add > Add marketplace**, enter
 `danielep71/VBA-HOUSE-STYLE` (connect GitHub when asked, since the repo is
 private), turn on **Sync automatically**, then turn on the plugin
-`vba-house-style`. **Check for updates** forces a sync.
+`vba-house-style`. After each release, **Check for updates** pulls the new
+version.
 
 ### 📦 Fallback: upload a ZIP
 
