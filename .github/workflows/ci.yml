@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Style check of the worked example
+        run: python skills/vba-house-style/scripts/check_vba_style.py skills/vba-house-style/references
+
+      - name: Build the plugin ZIP
+        run: python tools/build_plugin.py
+
+      - name: Upload the plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: vba-house-style-plugin
+          path: dist/*.zip
+          if-no-files-found: error

@@ -110,6 +110,9 @@ python -m unittest discover -s tests
    ```
 
    It writes `dist\vba-house-style-plugin-<version>.zip`.
+   Without a local build, download the same ZIP from the latest
+   **CI** run on `main` (GitHub > Actions > CI > artifact
+   `vba-house-style-plugin`).
 4. ☁️ On claude.ai open **Plugins**, open "Vba house style", and upload the new
    ZIP (or **Add > Upload plugin**). New sessions pick up the new version, in
    the cloud and in a signed-in local Claude Code.
