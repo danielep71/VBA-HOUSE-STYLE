@@ -111,7 +111,19 @@ spaces, with a lone `'` line between fields:
    7 spaces). `None` when there is nothing to say.
 9. `UPDATED` - the date of the last substantive change, `YYYY-MM-DD`.
 
-No field is ever omitted; write `None` instead. Do not invent facts: if you
+No field is ever omitted; write `None` instead.
+
+**Compact header.** A `Private` procedure whose body has at most 15 code
+lines (comments and blank lines not counted) may use a compact header:
+`PURPOSE` and `UPDATED`, plus any of the other fields that say something
+useful, still in the order above. `Public`, `Friend` and event procedures
+always use all nine.
+
+**Extra sections.** A module, class or procedure header may add its own
+UPPERCASE sections (for example `PUBLIC SURFACE`) after the standard fields
+and before `UPDATED`, which always comes last.
+
+Do not invent facts: if you
 cannot tell from the code why something exists, write what the code shows and
 flag the gap to the user rather than guessing. When you reformat without
 changing behavior, keep the existing `UPDATED` date; when you change behavior,
@@ -151,7 +163,7 @@ A file may add its own clearly named sections (for example
 '------------------------------------------------------------------------------
 '                           CENTERED TITLE
 '------------------------------------------------------------------------------
-' PURPOSE ... (nine fields) ... ' UPDATED
+' PURPOSE ... (nine fields, or compact) ... ' UPDATED
 '------------------------------------------------------------------------------
                                   <- one blank line
 <body sections>
@@ -253,8 +265,9 @@ Capture `Err` before any other call; raise custom errors as
   `ShapeIndex`), no Hungarian prefixes; object variables released with
   `Set x = Nothing` in the exit/cleanup path.
 - `Select Case` with `Case Else` whenever unexpected values matter.
-- Keep lines readable (aim for 100 characters, hard limit 120 except for
-  long string literals and constant tables).
+- Keep lines readable (aim for 100 characters, hard limit 120). String
+  literal contents and the trailing comment of an aligned declaration do not
+  count toward the limit; the code around them does.
 
 ## What not to do
 

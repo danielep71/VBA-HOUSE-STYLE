@@ -28,6 +28,13 @@ PROC_RE = re.compile(
     r"(Sub|Function|Property\s+(?:Get|Let|Set))\s+(\w+)", re.I)
 END_RE = re.compile(r"^End\s+(Sub|Function|Property)\b", re.I)
 BANNER_RE = re.compile(r"^'[-=]{5,}\s*$")
+LABEL_RE = re.compile(r"' [A-Z][A-Z /]+")
+STRING_RE = re.compile(r'"(?:[^"]|"")*"')
+DECL_RE = re.compile(
+    r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
+    r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
+COMPACT_MAX = 15        # body lines up to which a Private procedure may be compact
+COMPACT_FIELDS = ["PURPOSE", "UPDATED"]
 
 
 def code_start(lines: list[str]) -> int:
@@ -38,6 +45,36 @@ def code_start(lines: list[str]) -> int:
             if line.startswith("Attribute "):
                 return i
     return 0
+
+
+def code_length(line: str) -> int:
+    """Length of a line without string-literal contents and, for a
+    declaration, without its trailing comment (tables and long literals are
+    exempt from the line limit; the code around them is not)."""
+    bare = STRING_RE.sub('""', line)
+    if DECL_RE.match(bare) and "'" in bare:
+        bare = bare[:bare.index("'")].rstrip()
+    return len(bare)
+
+
+def field_problems(labels: list[str], required: list[str]) -> list[str]:
+    """Missing fields, standard fields out of order, and extra sections that
+    are not between the standard fields and UPDATED."""
+    problems = []
+    seen = [f for f in labels if f in FIELDS]
+    missing = [f for f in required if f not in seen]
+    if missing:
+        problems.append("header missing " + ", ".join(missing))
+    if seen != sorted(seen, key=FIELDS.index):
+        problems.append("header fields out of order")
+    for n, label in enumerate(labels):
+        if label in FIELDS:
+            continue
+        before = [f for f in labels[n + 1:] if f in FIELDS and f != "UPDATED"]
+        if before:
+            problems.append(f"extra section {label} must follow {before[-1]}")
+            break
+    return problems
 
 
 def fix(raw: bytes) -> bytes:
@@ -84,13 +121,23 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             add("ERROR", n, "trailing whitespace")
         if BANNER_RE.match(line) and len(line.rstrip()) != 79:
             add("ERROR", n, f"banner is {len(line.rstrip())} chars, expected 79")
-        if max_line and len(line) > max_line:
+        if max_line and len(line) > max_line and code_length(line) > max_line:
             add("WARN", n, f"line is {len(line)} chars (> {max_line})")
 
     # Component header fields (first header after Option Explicit).
-    head = "\n".join(lines[start:start + 200])
-    if not re.search(r"^' (MODULE|CLASS):", head, re.M):
+    top = next((n for n in range(start, min(start + 200, len(lines)))
+                if re.match(r"' (MODULE|CLASS):", lines[n])), None)
+    if top is None:
         add("WARN", 0, "no ' MODULE: / ' CLASS: component header")
+    else:
+        n = top + 1
+        while n < len(lines) and lines[n].startswith("'") \
+                and not (BANNER_RE.match(lines[n]) and "UPDATED" in
+                         [ln[2:] for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]):
+            n += 1
+        labels = [ln[2:].strip() for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]
+        for msg in field_problems(labels, FIELDS):
+            add("WARN", top + 1, f"component {msg}")
 
     # Procedures: header fields in order, spacing between procedures.
     i = start
@@ -121,13 +168,11 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         while h < end and lines[h].startswith("'"):
             header.append(lines[h])
             h += 1
-        labels = [ln[2:].strip() for ln in header if re.fullmatch(r"' [A-Z][A-Z /]+", ln)]
-        seen = [f for f in labels if f in FIELDS]
-        missing = [f for f in FIELDS if f not in seen]
-        if missing:
-            add("WARN", sig_line, f"{name}: header missing {', '.join(missing)}")
-        elif seen[:len(FIELDS)] != FIELDS:
-            add("WARN", sig_line, f"{name}: header fields out of order")
+        labels = [ln[2:].strip() for ln in header if LABEL_RE.fullmatch(ln)]
+        body = sum(1 for ln in lines[h:end] if ln.strip() and not ln.lstrip().startswith("'"))
+        compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
+        for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
+            add("WARN", sig_line, f"{name}: {msg}")
         i = end + 1
     return out
 
