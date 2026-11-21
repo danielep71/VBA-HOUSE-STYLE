@@ -1,0 +1,14 @@
+{
+  "name": "vba-house-style",
+  "description": "Private marketplace for the VBA house-style plugin.",
+  "owner": {
+    "name": "Daniele Penza"
+  },
+  "plugins": [
+    {
+      "name": "vba-house-style",
+      "source": "./",
+      "description": "Format, write or review exported VBA source (.bas, .cls, .frm) in a fixed house style."
+    }
+  ]
+}

@@ -22,7 +22,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-INCLUDE = (".claude-plugin/", "skills/")
+INCLUDE = (".claude-plugin/plugin.json", "skills/")
 
 
 def main() -> int:

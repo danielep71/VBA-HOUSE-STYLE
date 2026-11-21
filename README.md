@@ -62,6 +62,7 @@ An excerpt from [`M_Example.bas`](skills/vba-house-style/references/M_Example.ba
 ```text
 vba-house-style/
 ├── .claude-plugin/
+│   ├── marketplace.json            🛒 lets claude.ai sync the plugin from this repo
 │   └── plugin.json                 📦 name, version, description
 ├── skills/
 │   └── vba-house-style/
@@ -103,19 +104,25 @@ python -m unittest discover -s tests
 2. 🔢 Raise `version` in `.claude-plugin/plugin.json` (for example 1.0.0 to
    1.0.1) and the **plugin** badge at the top of this file. The build stops
    if the two differ.
-3. 📦 Build the ZIP (needs Python 3 and Git):
+3. 🔀 Merge into `main`. claude.ai picks up the new version from this repo
+   (see below); only a raised version reaches users.
 
-   ```powershell
-   python tools\build_plugin.py
-   ```
+### ☁️ One-time setup on claude.ai
 
-   It writes `dist\vba-house-style-plugin-<version>.zip`.
-   Without a local build, download the same ZIP from the latest
-   **CI** run on `main` (GitHub > Actions > CI > artifact
-   `vba-house-style-plugin`).
-4. ☁️ On claude.ai open **Plugins**, open "Vba house style", and upload the new
-   ZIP (or **Add > Upload plugin**). New sessions pick up the new version, in
-   the cloud and in a signed-in local Claude Code.
+**Customize > Plugins > Add > Add marketplace**, enter
+`danielep71/VBA-HOUSE-STYLE` (connect GitHub when asked, since the repo is
+private), turn on **Sync automatically**, then turn on the plugin
+`vba-house-style`. **Check for updates** forces a sync.
+
+### 📦 Fallback: upload a ZIP
+
+```powershell
+python tools\build_plugin.py
+```
+
+It writes `dist\vba-house-style-plugin-<version>.zip`; the latest **CI** run
+on `main` has the same ZIP as the artifact `vba-house-style-plugin`. Upload it
+under **Plugins > Add > Upload plugin**.
 
 ## 💻 Local-only install
 
@@ -128,8 +135,9 @@ Copy-Item "$env:TEMP\vba-house-style\skills\vba-house-style" $dest -Recurse -For
 ```
 
 > [!WARNING]
-> Do not install both ways at once: the claude.ai plugin already syncs to a
-> signed-in local Claude Code, and two copies would show up as two skills.
+> Install one way only: the claude.ai plugin already syncs to a signed-in
+> local Claude Code, and two copies (marketplace, ZIP upload, or folder) would
+> show up as two skills.
 
 ---
 
