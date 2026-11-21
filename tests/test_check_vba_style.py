@@ -464,6 +464,9 @@ class CheckerTest(unittest.TestCase):
         self.assertNoFinding(findings, "use VBA.")
         findings = self.statements("Dim Text As String", "Result = Len(Text.Value)")
         self.assertFinding(findings, "use VBA.Len instead of Len")
+        findings = self.statements("Dim Count As Long: Dim Record As T_Record",
+                                   "Size = Len(Record)")
+        self.assertNoFinding(findings, "use VBA.")
         findings = self.statements("Result = Len(Text)",
                                    signature="Public Sub M_Test_A(ByRef Text As String)")
         self.assertFinding(findings, "use VBA.Len instead of Len")

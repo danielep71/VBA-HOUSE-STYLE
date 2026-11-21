@@ -524,7 +524,10 @@ def declared_names(statements: list[tuple[int, str]]) -> tuple[set[str], set[str
         if m and m.group(1).lower() not in SCALAR_TYPES:
             records.add(word)
 
-    for _, code in statements:
+    # One entry per statement: a line may hold several, split at ":" (not
+    # ":="; strings are already masked).
+    parts = [part for _, code in statements for part in re.split(r":(?!=)", code)]
+    for code in parts:
         code = code.strip()
         if not code or ATTRIBUTE_RE.match(code):
             continue
