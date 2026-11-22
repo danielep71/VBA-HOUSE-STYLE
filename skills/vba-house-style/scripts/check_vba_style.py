@@ -96,6 +96,7 @@ HUNGARIAN_RE = re.compile(r"(str|lng|int|obj|bln|dbl|var|rng|ws|wb)[A-Z]")
 PASCAL_RE = re.compile(r"[A-Z][A-Za-z0-9]*$")
 VISIBILITY_RE = re.compile(r"(?:Public|Private|Friend)\s", re.I)
 CONST_STMT_RE = re.compile(r"(?:(?:Public|Private|Global)\s+)?Const\s+(.*)$", re.I)
+LABEL_COL0_RE = re.compile(r"' \S")
 UPPER_SNAKE_RE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 # A one-line declaration whose "As" is aligned with its neighbours (group 1).
 # The modifier is required, so Type members, Enum members and Declare
@@ -352,6 +353,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             add("WARN", n, f"line is {len(line)} chars (> {max_line})")
 
     # Component header fields (first header after Option Explicit).
+    header_end = start
     top = next((n for n in range(start, min(start + 200, len(lines)))
                 if re.match(r"' (MODULE|CLASS):", lines[n])), None)
     if top is None:
@@ -362,6 +364,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                 and not (BANNER_RE.match(lines[n]) and "UPDATED" in
                          [ln[2:] for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]):
             n += 1
+        header_end = n
         labels = [ln[2:].strip() for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]
         for msg in field_problems(labels, FIELDS):
             add("WARN", top + 1, f"component {msg}")
@@ -374,6 +377,9 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                       len(lines))
     for line_no, msg in alignment_problems(lines, start, first_proc):
         add("WARN", line_no, msg)
+    if top is not None:
+        for line_no, msg in banner_problems(lines, header_end + 1, first_proc):
+            add("WARN", line_no, msg)
     statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
     i = start
     while i < len(lines):
@@ -399,24 +405,28 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         h = k + 1
         while h < end and lines[h].strip() == "":
             h += 1
-        header = []
+        header, header_at = [], h
         while h < end and lines[h].startswith("'"):
             header.append(lines[h])
             h += 1
+        for line_no, msg in title_problems(lines, header_at, h):
+            add("WARN", line_no, f"{name}: {msg}")
         labels = [ln[2:].strip() for ln in header if LABEL_RE.fullmatch(ln)]
         body = sum(1 for ln in lines[h:end] if ln.strip() and not ln.lstrip().startswith("'"))
         compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
+        # Sections start after the banner that closes the header, so the
+        # procedure title is never read as a section.
+        first = k + 1
+        updated = next((n for n in range(k + 1, end) if lines[n].rstrip() == "' UPDATED"), None)
+        if updated is not None:
+            first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
+            for line_no, msg in banner_problems(lines, first, end):
+                add("WARN", line_no, f"{name}: {msg}")
         if not compact and body > TRIVIAL_MAX:
             stmts = [(n, statements[n]) for n in range(k + 1, end) if n in statements]
             kind = m.group(1).split()[0].capitalize()
-            # Sections start after the banner that closes the header, so the
-            # procedure title is never read as a section.
-            first = k + 1
-            updated = next((n for n in range(k + 1, end) if lines[n].rstrip() == "' UPDATED"), None)
-            if updated is not None:
-                first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
             for line_no, msg in body_problems(lines, stmts, first, end,
                                               f"{component}.{name}", kind):
                 add("WARN", line_no, f"{name}: {msg}")
@@ -679,6 +689,57 @@ def const_findings(statements: list[tuple[int, str]]) -> list[tuple[int, str]]:
             if name and not UPPER_SNAKE_RE.match(name.group(1)):
                 out.append((n, f"constant {name.group(1)} is not UPPER_SNAKE_CASE"))
     return out
+
+
+def banner_problems(lines: list[str], first: int, last: int) -> list[tuple[int, str]]:
+    """Section banners in lines[first:last] that are not rule / label / rule
+    with an UPPERCASE label one space after the apostrophe, as (line number,
+    message). A label line sits between two banner lines; a column-0 comment
+    with a banner on only one side is a broken block. Group banners (empty
+    comment lines around a centered title) and intent comments (indented) are
+    not section banners."""
+    out: list[tuple[int, str]] = []
+    for n in range(first, last):
+        line = lines[n]
+        before = n > first and BANNER_RE.match(lines[n - 1]) is not None
+        after = n + 1 < last and BANNER_RE.match(lines[n + 1]) is not None
+        if BANNER_RE.match(line) or not line.startswith("'") or line.rstrip() == "'":
+            continue
+        if before and after:
+            text = line[1:].rstrip()
+            label = text.strip()
+            if not text.startswith(" ") or text.startswith("  "):
+                out.append((n + 1, f'section label "{label}" is not left-aligned '
+                                   "one space after the apostrophe"))
+            elif label != label.upper() or not re.search("[A-Z]", label):
+                out.append((n + 1, f'section label "{label}" is not UPPERCASE'))
+        elif (before or after) and LABEL_COL0_RE.match(line):
+            side = "closing" if before else "opening"
+            out.append((n + 1, f'section label "{line[2:].strip()}" has no {side} '
+                               "banner line"))
+    return out
+
+
+def title_problems(lines: list[str], first: int, last: int) -> list[tuple[int, str]]:
+    """The procedure title banner in the header lines[first:last], if any: a
+    banner, one title line and a banner. The title must be UPPERCASE and
+    centered in the 78 columns after the apostrophe, with (78 - len(title))
+    // 2 leading spaces (SKILL.md section 2)."""
+    banner = next((n for n in range(first, last) if BANNER_RE.match(lines[n])), None)
+    if banner is None or banner + 2 >= last or BANNER_RE.match(lines[banner + 1]) \
+            or not BANNER_RE.match(lines[banner + 2]):
+        return []
+    text = lines[banner + 1][1:].rstrip()
+    title = text.strip()
+    if not title:
+        return []
+    if title != title.upper() or not re.search("[A-Z]", title):
+        return [(banner + 2, f'procedure title "{title}" is not UPPERCASE')]
+    lead, want = len(text) - len(text.lstrip(" ")), max(0, (78 - len(title)) // 2)
+    if lead != want:
+        return [(banner + 2, f'procedure title "{title}" is not centered '
+                             f"({lead} leading spaces, expected {want})")]
+    return []
 
 
 def alignment_problems(lines: list[str], first: int, last: int) -> list[tuple[int, str]]:
