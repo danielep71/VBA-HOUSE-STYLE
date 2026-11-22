@@ -536,6 +536,140 @@ class CheckerTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # Visibility, constant names and declaration alignment.
+    def declarations(self, *decl: str) -> list[str]:
+        """Check a module whose declarations section holds the given lines."""
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        return self.run_check(module("M_Test", list(decl) + [""] + proc))
+
+    def test_signature_without_visibility_warns(self) -> None:
+        for signature, name in (("Sub M_Test_A()", "M_Test_A"),
+                                ("Function M_Test_A() As Long", "M_Test_A"),
+                                ("Property Get Value() As Long", "Value"),
+                                ("Static Sub M_Test_A()", "M_Test_A")):
+            with self.subTest(signature=signature):
+                findings = self.statements(signature=signature)
+                self.assertFinding(findings, f"WARN {name}: no Public, Private or Friend")
+
+    def test_signature_with_visibility_is_silent(self) -> None:
+        for signature in ("Public Sub M_Test_A()", "Private Sub Class_Initialize()",
+                          "Friend Property Get Value() As Long",
+                          "Public Static Function M_Test_A() As Long",
+                          "private sub M_Test_A()"):
+            with self.subTest(signature=signature):
+                self.assertNoFinding(self.statements(signature=signature), "no Public")
+
+    def test_visibility_follows_a_continued_signature(self) -> None:
+        proc = procedure("Sub M_Test_A(ByVal A As Long, _\r\n    ByVal B As Long)",
+                         cvs.FIELDS)
+        findings = self.run_check(module("M_Test", proc))
+        self.assertFinding(findings, "M_Test_A: no Public, Private or Friend")
+
+    def test_constant_not_upper_snake_case_warns(self) -> None:
+        findings = self.declarations(
+            "    Private Const MaxItems  As Long = 5",
+            "    Public Const maxCount   As Long = 5",
+            "    Const Win_Style         As Long = 1",
+            "    Global Const A_B, Mixed_Case = 3")
+        for name in ("MaxItems", "maxCount", "Win_Style", "Mixed_Case"):
+            self.assertFinding(findings, f"WARN constant {name} is not UPPER_SNAKE_CASE")
+        self.assertNoFinding(findings, "constant A_B")
+
+    def test_upper_snake_case_and_local_constants_are_silent(self) -> None:
+        findings = self.declarations(
+            "    Private Const EX_ERR_NO_OWNER As Long = 1001",
+            "    Public Const GWL_STYLE        As Long = -16",
+            "    Private Const LIMIT2          As Long = 2",
+            "    Private Const SMALL&          = 1",
+            "    #Const DEBUGGING = 1")
+        self.assertNoFinding(findings, "UPPER_SNAKE_CASE")
+        findings = self.statements("Const LocalLimit As Long = 1")
+        self.assertNoFinding(findings, "UPPER_SNAKE_CASE")
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_misaligned_as_warns_once_per_group(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String",
+            "    Private mSecond  As String",
+            "    Private mThird         As String")
+        self.assertFinding(findings, "WARN As is not aligned with its group (column 22, expected 25)")
+        self.assertEqual(sum("As is not aligned" in f for f in findings), 1, findings)
+
+    def test_misaligned_trailing_comment_warns(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String       'First",
+            "    Private mSecond     As String     'Second")
+        self.assertFinding(findings, "WARN trailing comment is not aligned with its group "
+                                     "(column 39, expected 41)")
+        self.assertNoFinding(findings, "As is not aligned")
+
+    def test_aligned_groups_are_silent_across_blank_lines(self) -> None:
+        findings = self.declarations(
+            "    Private Const EX_A     As Long = 1     'First",
+            "    Private Const EX_BB    As String = \"x\" 'Second",
+            "",
+            "    'Error numbers",
+            "    Private Const EX_ERR_X As Long = 1001  'Other column, other group",
+            "    Private Const EX_ERR_Y As Long = 1002  'Other column, other group")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_one_line_group_and_lines_without_a_comment_are_silent(self) -> None:
+        findings = self.declarations(
+            "    Private mOnly       As String       'Alone",
+            "",
+            "    Private mFirst      As String",
+            "    Private mSecond     As String       'Has one")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_groups_end_at_comments_statements_and_continuations(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String",
+            "    'A comment ends the group",
+            "    Private mSecond  As String",
+            "    Private Declare Function Beep Lib \"kernel32\" () As Long",
+            "    Private mThird  As String",
+            "    Private Const EX_TEXT As String = _",
+            "        \"long\"",
+            "    Private mFourth     As String")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_enum_type_and_conditional_members_are_exempt(self) -> None:
+        findings = self.declarations(
+            "    Public Type EX_Rect",
+            "        Left As Long",
+            "        TopEdge          As Long",
+            "    End Type",
+            "    Public Enum EX_Mode",
+            "        EX_ModeA = 0    'A",
+            "        EX_ModeB = 1  'B",
+            "    End Enum",
+            "    #If VBA7 Then",
+            "    Private Declare PtrSafe Function Beep Lib \"kernel32\" ( _",
+            "        ByVal Freq As Long) As Long",
+            "    #End If")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_declare_section_alignment_is_checked(self) -> None:
+        bad = ("DECLARE", [
+            '    Const PROC_NAME             As String = "M_Test.M_Test_Run"', "",
+            "    Dim Count                   As Long         'Counter",
+            "    Dim Total              As Long    'Sum"])
+        findings = self.sections(bad, TASK)
+        self.assertFinding(findings, "M_Test_Run: As is not aligned with its group")
+        self.assertFinding(findings, "M_Test_Run: trailing comment is not aligned")
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_alignment_outside_declare_sections_is_not_checked(self) -> None:
+        task = ("DO WORK", ["    Dim Count As Long", "    Dim Total          As Long"])
+        findings = self.sections(DECLARE, task)
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_declaration_findings_do_not_change_errors(self) -> None:
+        findings = self.declarations("    Private Const MaxItems As Long = 5",
+                                     "    Private mA    As Long", "    Private mB  As Long")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # Tokenizer.
     def kinds(self, line: str) -> list[tuple[str, str]]:
         return cvs.tokenize(line)

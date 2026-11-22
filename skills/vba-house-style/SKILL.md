@@ -27,7 +27,10 @@ ones.
    where `vbNullString` is expected, VBA library calls written without
    `VBA.` (the list of section 7), `Select Case` without `Case Else`, and
    local variables with a Hungarian prefix or a name that is not
-   PascalCase. It also checks the body sections of
+   PascalCase, a procedure without `Public` / `Private` / `Friend`, a
+   module-level constant that is not `UPPER_SNAKE_CASE`, and `As` or a
+   trailing `'comment` out of column within a group of declarations (module
+   top and `DECLARE` sections). It also checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
    clean exit in `EXIT PROCEDURE` before the label. One-line procedures and
