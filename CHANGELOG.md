@@ -26,6 +26,13 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   header, intent comments and header fields are not checked. Exit code and
   `--fix` are unchanged.
 
+### Documentation
+
+- README: the feature table covers banner titles, visibility and constant
+  names; the layout lists `.github/`, `docs/`, `CHANGELOG.md` and `LICENSE`;
+  the release steps add the changelog and the release-branch flow; links to
+  the changelog and the label guide.
+
 ## [1.3.0] - 2026-11-21
 
 ### Added

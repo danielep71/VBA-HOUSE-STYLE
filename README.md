@@ -15,7 +15,9 @@
 [📁 Layout](#-layout) ·
 [🔍 Checker](#-the-checker) ·
 [🚀 Release](#-release-a-new-version) ·
-[💻 Local install](#-local-only-install)
+[💻 Local install](#-local-only-install) ·
+[📝 Changelog](CHANGELOG.md) ·
+[🏷️ Issue labels](docs/ISSUE_LABELS.md)
 
 </div>
 
@@ -25,11 +27,11 @@
 
 | | Rule | In short |
 |---|---|---|
-| 📏 | **Banners** | Every banner is exactly 79 characters: `'` plus 78 dashes |
+| 📏 | **Banners** | Every banner is exactly 79 characters: `'` plus 78 dashes; procedure titles UPPERCASE and centered, section labels UPPERCASE |
 | 🧾 | **Nine-field header** | `PURPOSE` · `WHY THIS EXISTS` · `INPUTS` · `RETURNS` · `BEHAVIOR` · `ERROR POLICY` · `DEPENDENCIES` · `NOTES` · `UPDATED`; small `Private` helpers may use a compact `PURPOSE` + `UPDATED` header |
 | 🧱 | **Body sections** | `DECLARE` → `INITIALIZE` → task sections → `EXIT PROCEDURE` → `ERROR HANDLER` |
 | ↘️ | **Two-level indent** | One-line intent comment at 4 spaces, code at 8 |
-| 📐 | **Aligned declarations** | `As` and the trailing `'comment` in fixed columns |
+| 📐 | **Aligned declarations** | `As` and the trailing `'comment` in fixed columns; explicit `Public` / `Private` / `Friend`; module constants in `UPPER_SNAKE_CASE` |
 | 🔤 | **Qualified built-ins** | `VBA.Len`, `VBA.Trim$`, `VBA.CStr`… |
 | ↩️ | **CRLF, no tabs** | No trailing whitespace; the `.frm` designer block is never touched |
 | 🛡️ | **Behavior preserving** | Formatting never renames public members, changes signatures or alters logic |
@@ -64,6 +66,12 @@ vba-house-style/
 ├── .claude-plugin/
 │   ├── marketplace.json            🛒 lets claude.ai sync the plugin from this repo
 │   └── plugin.json                 📦 name, version, description
+├── .github/
+│   ├── labels.json                 🏷️ issue label catalogue
+│   ├── scripts/                    🔄 label sync and drift scripts
+│   └── workflows/                  ⚙️ CI, label sync, label drift
+├── docs/
+│   └── ISSUE_LABELS.md             📋 how the labels are used
 ├── skills/
 │   └── vba-house-style/
 │       ├── SKILL.md                📘 the rules and the workflow
@@ -73,8 +81,10 @@ vba-house-style/
 │           └── check_vba_style.py  🔍 checker; --fix normalizes whitespace only
 ├── tests/
 │   └── test_check_vba_style.py     🧪 checker tests
-└── tools/
-    └── build_plugin.py             🛠️ builds the uploadable ZIP
+├── tools/
+│   └── build_plugin.py             🛠️ builds the uploadable ZIP
+├── CHANGELOG.md                    📝 what changed in each version
+└── LICENSE                         ⚖️ MIT
 ```
 
 ## 🔍 The checker
@@ -92,10 +102,12 @@ python skills\vba-house-style\scripts\check_vba_style.py --fix src\    # normali
 `--fix` touches whitespace and line endings only, never code, and skips the
 `.frm` designer block. The exit code is `1` while any error remains.
 
-Tests (standard library only):
+Tests (standard library only); CI runs the same command, plus a style check of
+`M_Example.bas`, which must stay clean:
 
 ```powershell
 python -m unittest discover -s tests
+python skills\vba-house-style\scripts\check_vba_style.py skills\vba-house-style\references
 ```
 
 ## 🚀 Release a new version
@@ -104,10 +116,13 @@ python -m unittest discover -s tests
 2. 🔢 Raise `version` in `.claude-plugin/plugin.json` (for example 1.0.0 to
    1.0.1) and the **plugin** badge at the top of this file. The build stops
    if the two differ.
-3. 🔀 Merge into `main`.
-4. 🔄 On claude.ai, **Manage marketplaces > Check for updates** to pull the
+3. 📝 In `CHANGELOG.md`, move `[Unreleased]` under the new version with its
+   date.
+4. 🔀 Merge the task pull requests into `release/vX.Y.Z`, then integrate that
+   branch into `main`.
+5. 🔄 On claude.ai, **Manage marketplaces > Check for updates** to pull the
    new version now; only a raised version reaches users.
-5. 🆕 Open a new session: a running session keeps the version it started
+6. 🆕 Open a new session: a running session keeps the version it started
    with.
 
 ### ☁️ One-time setup on claude.ai
