@@ -1,6 +1,6 @@
 ---
 name: vba-house-style
-description: Format, write or review exported VBA source (.bas, .cls, .frm) in the house style - 79-column comment banners, a fixed nine-field documentation header on every module and procedure, DECLARE/INITIALIZE/.../EXIT PROCEDURE/ERROR HANDLER section banners, two-level statement indentation under one-line intent comments, column-aligned declarations, VBA.-qualified built-ins, CRLF line endings. Use when the user asks to format, restyle, tidy, document or review VBA code, or writes new VBA in a repository that should follow this style.
+description: Format, write or review exported VBA source (.bas, .cls, .frm) in the house style - 79-column comment banners, a fixed nine-field documentation header on every module and procedure, DECLARE/INITIALIZE/.../EXIT PROCEDURE/ERROR HANDLER section banners, two-level statement indentation under one-line intent comments, column-aligned declarations, CRLF line endings. Use when the user asks to format, restyle, tidy, document or review VBA code, or writes new VBA in a repository that should follow this style.
 ---
 
 # VBA house style
@@ -24,8 +24,7 @@ ones.
    warns on statement-level slips: `Next` without its counter, `:` between
    statements, `InStr` / `StrComp` without a compare mode, parameters
    without `ByVal` / `ByRef` or `As`, a function without `As`, and `= ""`
-   where `vbNullString` is expected, VBA library calls written without
-   `VBA.` (the list of section 7), `Select Case` without `Case Else`, and
+   where `vbNullString` is expected, `Select Case` without `Case Else`, and
    local variables with a Hungarian prefix or a name that is not
    PascalCase, a procedure without `Public` / `Private` / `Friend`, a
    module-level constant that is not `UPPER_SNAKE_CASE`, and `As` or a
@@ -266,16 +265,14 @@ Capture `Err` before any other call; raise custom errors as
 
 ## 7. Statement-level conventions
 
-- Qualify VBA library calls: `VBA.Len`, `VBA.Trim$`, `VBA.UCase$`,
-  `VBA.InStr`, `VBA.CStr`, `VBA.vbNullString`... Prefer the `$` string
-  variants. Use `VBA.LenB(x) = 0` or `VBA.Len(x) = 0` for empty checks, and
-  `vbNullString` rather than `""`. The checker reports the names in
-  `VBA_QUALIFIED` (`scripts/check_vba_style.py`) when they are written bare,
-  except a member (`Item.Len`), a name the file declares itself, the `Mid$`
-  statement, the `Len =` clause of `Open`, and `Len` / `LenB` of an
-  expression that starts with a variable declared as a user-defined type or
-  object (`Item`, `Item.Inner`) or with a `With` member. A function with the same name
-  in another module is not seen: ignore the warning there.
+- The `VBA.` qualifier on library calls (`VBA.Len`, `VBA.Trim$`,
+  `VBA.InStr`...) is optional, and the checker reports neither form. Write it
+  when the code may lose a reference (a plain `Len` can then stop compiling
+  with "Can't find project or library", while `VBA.Len` still compiles) or
+  when the project defines a name that collides with a library function
+  (`Format`, `Replace`). Otherwise keep the style of the file you edit. Prefer
+  the `$` string variants. Use `LenB(x) = 0` or `Len(x) = 0` for empty checks,
+  and `vbNullString` rather than `""`.
 - Explicit compare mode in `InStr` / `StrComp` (`vbBinaryCompare` or
   `vbTextCompare`).
 - `Next` always names its counter (`Next CharIndex`, `Next Ctl`).

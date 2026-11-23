@@ -26,6 +26,16 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   header, intent comments and header fields are not checked. Exit code and
   `--fix` are unchanged.
 
+### Changed
+
+- Checker: the `VBA.` qualifier is optional. The WARN for VBA library calls
+  written without `VBA.` (#8) is removed, together with its name list
+  (`VBA_QUALIFIED`) and its tests; neither form is reported, and code that
+  already uses `VBA.` stays valid. `SKILL.md` keeps the qualifier as a
+  recommendation when a project may lose a reference or defines names that
+  collide with the library, and `M_Example.bas` uses the plain form (#20).
+  Exit code and `--fix` are unchanged.
+
 ### Documentation
 
 - README: the feature table covers banner titles, visibility and constant
