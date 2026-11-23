@@ -670,6 +670,94 @@ class CheckerTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # Banner labels and procedure titles.
+    def body_with(self, *extra: str, title: str | None = None) -> list[str]:
+        """Check a procedure whose body holds the given column-0 lines."""
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        if title is not None:
+            proc = [proc[0], ""] + header(cvs.FIELDS, title) + proc[-4:]
+        return self.run_check(module("M_Test", proc[:-2] + list(extra) + proc[-2:]))
+
+    def test_title_not_uppercase_warns(self) -> None:
+        findings = self.body_with(title="'" + " " * 35 + "Do Work")
+        self.assertFinding(findings, 'WARN M_Test_A: procedure title "Do Work" is not UPPERCASE')
+
+    def test_title_not_centered_warns(self) -> None:
+        for lead in (0, 1, 34, 36):
+            with self.subTest(lead=lead):
+                findings = self.body_with(title="'" + " " * lead + "DO WORK")
+                self.assertFinding(findings, f'procedure title "DO WORK" is not centered '
+                                             f"({lead} leading spaces, expected 35)")
+
+    def test_centered_titles_of_odd_and_even_length_are_silent(self) -> None:
+        for title in ("DO WORK", "DO WORKS", "A", "X" * 78):
+            with self.subTest(title=title):
+                lead = (78 - len(title)) // 2
+                findings = self.body_with(title="'" + " " * lead + title)
+                self.assertNoFinding(findings, "procedure title")
+
+    def test_header_without_a_title_banner_is_silent(self) -> None:
+        findings = self.run_check(module("M_Test", [
+            "Public Sub M_Test_A()", ""] + header(cvs.FIELDS) + ["", "End Sub"]))
+        self.assertNoFinding(findings, "procedure title")
+
+    def test_section_label_not_uppercase_or_not_left_aligned_warns(self) -> None:
+        findings = self.body_with(BANNER, "' Do work", BANNER, "    'Count once",
+                                  "        Debug.Print 1",
+                                  BANNER, "'DECLARE", BANNER,
+                                  BANNER, "'   EXIT PROCEDURE", BANNER)
+        self.assertFinding(findings, 'WARN M_Test_A: section label "Do work" is not UPPERCASE')
+        self.assertFinding(findings, 'section label "DECLARE" is not left-aligned')
+        self.assertFinding(findings, 'section label "EXIT PROCEDURE" is not left-aligned')
+
+    def test_section_labels_are_checked_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module(
+            "M_Test", proc[:-2] + [BANNER, "' Do work", BANNER] + proc[-2:]))
+        self.assertFinding(findings, "header missing UPDATED")
+        self.assertFinding(findings, 'WARN M_Test_A: section label "Do work" is not UPPERCASE')
+
+    def test_header_fields_are_not_read_as_labels_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module("M_Test", proc))
+        self.assertNoFinding(findings, "section label")
+
+    def test_section_label_in_the_module_top_is_checked(self) -> None:
+        findings = self.declarations(BANNER, "' Private constants", BANNER,
+                                     "    Private Const EX_A As Long = 1")
+        self.assertFinding(findings, 'WARN section label "Private constants" is not UPPERCASE')
+
+    def test_standard_and_task_labels_are_silent(self) -> None:
+        sections = [(name, ["    'Do it", "        Debug.Print 1"]) for name in (
+            "DECLARE", "INITIALIZE", "VALIDATE INPUTS", "STEP 2 / 3", "LOAD SETTINGS & STATE",
+            "EXIT PROCEDURE", "ERROR HANDLER")]
+        findings = self.sections(*sections)
+        self.assertNoFinding(findings, "section label")
+
+    def test_broken_banner_blocks_warn(self) -> None:
+        findings = self.body_with(BANNER, "' DO WORK", "    'Count once",
+                                  "        Debug.Print 1", "' EXIT PROCEDURE", BANNER)
+        self.assertFinding(findings, 'section label "DO WORK" has no closing banner line')
+        self.assertFinding(findings, 'section label "EXIT PROCEDURE" has no opening banner line')
+
+    def test_group_banner_component_header_and_comments_are_silent(self) -> None:
+        group = ["'", BANNER, "'", "'" + " " * 35 + "SETTINGS", "'", BANNER, "'"]
+        decl = ["    Private mName As String", ""] + group
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        text = module("M_Test", decl + proc[:-2] + ["    'A note", "' column-0 note"] + proc[-2:])
+        self.assertNoFinding(self.run_check(text), "section label")
+        eq = BANNER.replace("-", "=")
+        comp = header(cvs.FIELDS, "' MODULE: M_Test")
+        comp = [eq if ln == BANNER else ln for ln in comp]
+        self.assertNoFinding(self.run_check(module("M_Test", [], component=comp)),
+                             "section label")
+
+    def test_banner_findings_do_not_change_errors(self) -> None:
+        findings = self.body_with(BANNER, "' Do work", BANNER,
+                                  title="' Do Work")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # Tokenizer.
     def kinds(self, line: str) -> list[tuple[str, str]]:
         return cvs.tokenize(line)

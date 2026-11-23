@@ -30,7 +30,10 @@ ones.
    PascalCase, a procedure without `Public` / `Private` / `Friend`, a
    module-level constant that is not `UPPER_SNAKE_CASE`, and `As` or a
    trailing `'comment` out of column within a group of declarations (module
-   top and `DECLARE` sections). It also checks the body sections of
+   top and `DECLARE` sections), a procedure title that is not UPPERCASE or not
+   centered, and a section label that is not UPPERCASE, not one space after
+   the apostrophe, or missing its opening or closing banner line. It also
+   checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
    clean exit in `EXIT PROCEDURE` before the label. One-line procedures and

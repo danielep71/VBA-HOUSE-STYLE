@@ -17,6 +17,14 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   statement or a continued line ends it. `Declare`, `Enum` and `Type`
   members and conditional-compilation lines are not groups. One finding per
   group and kind. Exit code and `--fix` are unchanged.
+- Checker: WARN for a procedure title banner whose title is not UPPERCASE or
+  not centered (`(78 - len(title)) // 2` leading spaces, as in `SKILL.md`
+  section 2, so no tolerance), and for a section banner whose label is not
+  UPPERCASE, not one space after the apostrophe, or has a banner line on only
+  one side (#16). Section banners are checked in the module top (after the
+  component header) and in procedure bodies. Group banners, the component
+  header, intent comments and header fields are not checked. Exit code and
+  `--fix` are unchanged.
 
 ## [1.3.0] - 2026-11-21
 
