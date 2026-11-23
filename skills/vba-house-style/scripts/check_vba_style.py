@@ -418,12 +418,15 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             add("WARN", sig_line, f"{name}: {msg}")
         # Sections start after the banner that closes the header, so the
         # procedure title is never read as a section.
+        # Without UPDATED the header block ends where its comment lines do.
         first = k + 1
         updated = next((n for n in range(k + 1, end) if lines[n].rstrip() == "' UPDATED"), None)
+        banners_from = h
         if updated is not None:
             first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
-            for line_no, msg in banner_problems(lines, first, end):
-                add("WARN", line_no, f"{name}: {msg}")
+            banners_from = first
+        for line_no, msg in banner_problems(lines, banners_from, end):
+            add("WARN", line_no, f"{name}: {msg}")
         if not compact and body > TRIVIAL_MAX:
             stmts = [(n, statements[n]) for n in range(k + 1, end) if n in statements]
             kind = m.group(1).split()[0].capitalize()

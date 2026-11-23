@@ -710,6 +710,18 @@ class CheckerTest(unittest.TestCase):
         self.assertFinding(findings, 'section label "DECLARE" is not left-aligned')
         self.assertFinding(findings, 'section label "EXIT PROCEDURE" is not left-aligned')
 
+    def test_section_labels_are_checked_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module(
+            "M_Test", proc[:-2] + [BANNER, "' Do work", BANNER] + proc[-2:]))
+        self.assertFinding(findings, "header missing UPDATED")
+        self.assertFinding(findings, 'WARN M_Test_A: section label "Do work" is not UPPERCASE')
+
+    def test_header_fields_are_not_read_as_labels_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module("M_Test", proc))
+        self.assertNoFinding(findings, "section label")
+
     def test_section_label_in_the_module_top_is_checked(self) -> None:
         findings = self.declarations(BANNER, "' Private constants", BANNER,
                                      "    Private Const EX_A As Long = 1")
