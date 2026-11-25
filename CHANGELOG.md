@@ -42,6 +42,9 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   names; the layout lists `.github/`, `docs/`, `CHANGELOG.md` and `LICENSE`;
   the release steps add the changelog and the release-branch flow; links to
   the changelog and the label guide.
+- `M_Example.bas`: `M_Greeting_GetPrefix` now shows the compact header of a
+  short `Private` procedure (`PURPOSE`, `RETURNS`, `UPDATED`); `SKILL.md`
+  points to it. No checker change.
 
 ## [1.3.0] - 2026-11-21
 

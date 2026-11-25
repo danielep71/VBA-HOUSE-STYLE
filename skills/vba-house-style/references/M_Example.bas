@@ -32,6 +32,8 @@ Option Explicit
 '
 ' NOTES
 '   Replace EX_ with the project prefix of the target repository
+'   M_Greeting_GetPrefix shows the compact header of a short Private
+'   procedure
 '
 ' UPDATED
 '   2026-01-15
@@ -194,26 +196,8 @@ Private Function M_Greeting_GetPrefix() As String
 ' PURPOSE
 '   Returns the greeting prefix in effect
 '
-' WHY THIS EXISTS
-'   The default applies until a caller configures a different prefix
-'
-' INPUTS
-'   None
-'
 ' RETURNS
 '   The configured prefix, or EX_DEFAULT_PREFIX when none is configured
-'
-' BEHAVIOR
-'   Returns the stored prefix when it is not empty
-'
-' ERROR POLICY
-'   None
-'
-' DEPENDENCIES
-'   None
-'
-' NOTES
-'   None
 '
 ' UPDATED
 '   2026-01-15
