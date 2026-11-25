@@ -32,7 +32,11 @@ ones.
    top and `DECLARE` sections), a procedure title that is not UPPERCASE or not
    centered, a section label that is not UPPERCASE, not one space after
    the apostrophe, or missing its opening or closing banner line, and a
-   statement or intent comment out of indentation in a body section. It also
+   statement or intent comment out of indentation in a body section. In the
+   headers it warns on field text not at 3 spaces, an `UPDATED` that is not a
+   real `YYYY-MM-DD` date, a `Sub` whose `RETURNS` is not `Nothing`, and
+   `INPUTS` that do not match the signature (or are not `None at module
+   level` / `None at class level` in the component header). It also
    checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
@@ -127,6 +131,10 @@ spaces, with a lone `'` line between fields:
 8. `NOTES` - design decisions, caveats, call examples (code examples indented
    7 spaces). `None` when there is nothing to say.
 9. `UPDATED` - the date of the last substantive change, `YYYY-MM-DD`.
+
+The checker reads `INPUTS` names as the lines at exactly 3 spaces that hold
+one identifier; when another line sits at 3 spaces it does not compare the
+names with the signature.
 
 No field is ever omitted; write `None` instead.
 

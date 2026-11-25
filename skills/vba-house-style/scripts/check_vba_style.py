@@ -16,6 +16,7 @@ of the export is preserved. Standard library only.
 from __future__ import annotations
 
 import argparse
+import datetime
 import re
 import sys
 from pathlib import Path
@@ -29,6 +30,9 @@ PROC_RE = re.compile(
 END_RE = re.compile(r"^End\s+(Sub|Function|Property)\b", re.I)
 BANNER_RE = re.compile(r"^'[-=]{5,}\s*$")
 LABEL_RE = re.compile(r"' [A-Z][A-Z /]+")
+# Header field text starts three spaces after the apostrophe (SKILL.md
+# section 4); deeper lines continue it.
+FIELD_TEXT_RE = re.compile(r"'   \S")
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
@@ -223,6 +227,114 @@ def field_problems(labels: list[str], required: list[str]) -> list[str]:
             problems.append(f"extra section {label} must follow {before[-1]}")
             break
     return problems
+
+
+FieldText = dict[str, tuple[int, list[tuple[int, str]]]]
+
+
+def header_fields(lines: list[str], first: int, last: int) -> FieldText:
+    """Standard fields of the header in lines[first:last]: label -> (label
+    line index, [(line index, text line)]). Text lines are the comment lines
+    after the label up to the next label or banner; lone "'" lines are left
+    out."""
+    fields: FieldText = {}
+    current: list[tuple[int, str]] | None = None
+    for n in range(first, last):
+        line = lines[n]
+        if BANNER_RE.match(line):
+            current = None
+        elif LABEL_RE.fullmatch(line):
+            label = line[2:].strip()
+            current = [] if label in FIELDS and label not in fields else None
+            if current is not None:
+                fields[label] = (n, current)
+        elif current is not None and line.startswith("'") and line.strip() != "'":
+            current.append((n, line))
+    return fields
+
+
+def param_names(code: str, m: re.Match[str]) -> list[str] | None:
+    """Parameter names of a signature, or None when the list cannot be read."""
+    open_at = code.find("(", m.end())
+    if open_at < 0:
+        return []
+    parsed = call_args(code, open_at)
+    if parsed is None:
+        return None
+    names = []
+    for param in parsed[0]:
+        if not param:
+            continue
+        param = re.sub(r"^(?:(?:Optional|ByVal|ByRef|ParamArray)\s+)*", "", param, flags=re.I)
+        name = re.match(r"[A-Za-z]\w*", param)
+        if name is None:
+            return None
+        names.append(name.group(0))
+    return names
+
+
+def field_value_problems(lines: list[str], first: int, last: int,
+                         params: list[str] | None, kind: str,
+                         component: str | None = None) -> list[tuple[int, str]]:
+    """Header field values (SKILL.md section 4): field text at 3 spaces, a
+    valid UPDATED date, a Sub that RETURNS Nothing, INPUTS that match the
+    signature (procedures) or say None at module / class level (components).
+    params is None when the signature could not be read; kind is the
+    procedure kind in lower case. Fields that are absent are not checked."""
+    out: list[tuple[int, str]] = []
+    fields = header_fields(lines, first, last)
+    for label, (at, text) in fields.items():
+        if text and not FIELD_TEXT_RE.match(text[0][1]):
+            out.append((text[0][0] + 1, f"{label} text not at 3 spaces"))
+    if "UPDATED" in fields:
+        at, text = fields["UPDATED"]
+        value = text[0][1][1:].strip() if text else ""
+        if not valid_date(value):
+            out.append(((text[0][0] if text else at) + 1,
+                        f"UPDATED {value or '(empty)'} is not a YYYY-MM-DD date"))
+    if kind == "sub" and fields.get("RETURNS", (0, []))[1]:
+        at, text = fields["RETURNS"]
+        if not re.match(r"Nothing\b", text[0][1][1:].strip()):
+            out.append((text[0][0] + 1, "RETURNS of a Sub is not Nothing"))
+    if "INPUTS" not in fields or not fields["INPUTS"][1]:
+        return out
+    at, text = fields["INPUTS"]
+    first_text = text[0][1][1:].strip()
+    if component is not None:
+        want = f"None at {component} level"
+        if first_text.rstrip(".") != want:
+            out.append((text[0][0] + 1, f"component INPUTS is not '{want}'"))
+        return out
+    if params is None:
+        return out
+    if re.match(r"None\b", first_text):
+        if params:
+            out.append((text[0][0] + 1, f"INPUTS is None but the signature "
+                        f"declares {', '.join(params)}"))
+        return out
+    named = [line for _, line in text if FIELD_TEXT_RE.match(line)]
+    if not all(re.fullmatch(r"'   [A-Za-z]\w*", line) for line in named):
+        return out
+    listed = [line[4:] for line in named]
+    lower = {p.lower() for p in params}
+    missing = [p for p in params if p.lower() not in {n.lower() for n in listed}]
+    extra = [n for n in listed if n.lower() not in lower]
+    if missing:
+        out.append((at + 1, f"INPUTS does not list {', '.join(missing)}"))
+    if extra:
+        out.append((at + 1, f"INPUTS lists {', '.join(extra)}, not in the signature"))
+    return out
+
+
+def valid_date(value: str) -> bool:
+    """True for a real calendar date written YYYY-MM-DD."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, int]]:
@@ -481,6 +593,10 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         labels = [ln[2:].strip() for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]
         for msg in field_problems(labels, FIELDS):
             add("WARN", top + 1, f"component {msg}")
+        level = "class" if lines[top].startswith("' CLASS:") else "module"
+        for line_no, msg in field_value_problems(lines, top, header_end, [], "",
+                                                 component=level):
+            add("WARN", line_no, msg if msg.startswith("component") else f"component {msg}")
 
     # Procedures: header fields in order, spacing between procedures, body
     # sections.
@@ -529,6 +645,12 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
+        sig_code = statements.get(i, "")
+        sig_m = PROC_RE.match(sig_code)
+        params = param_names(sig_code, sig_m) if sig_m else None
+        for line_no, msg in field_value_problems(lines, header_at, h, params,
+                                                 m.group(1).split()[0].lower()):
+            add("WARN", line_no, f"{name}: {msg}")
         # Sections start after the banner that closes the header, so the
         # procedure title is never read as a section.
         # Without UPDATED the header block ends where its comment lines do.

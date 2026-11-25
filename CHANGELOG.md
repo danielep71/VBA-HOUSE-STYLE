@@ -3,6 +3,21 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+
+- Checker: WARN for header field values (#29): field text whose first line
+  is not at 3 spaces, an `UPDATED` that is not a real `YYYY-MM-DD` date, a
+  `Sub` whose `RETURNS` does not start with `Nothing`, procedure `INPUTS`
+  that miss a parameter of the signature, list a name the signature does not
+  declare or say `None` when there are parameters, and a component `INPUTS`
+  that is not `None at module level` (`None at class level` in a class).
+  `INPUTS` names are the lines at exactly 3 spaces holding one identifier;
+  when another line sits at 3 spaces the names are not compared. Only the
+  fields present are checked, so compact headers stay valid. Exit code and
+  `--fix` are unchanged.
+
 ## [1.5.0] - 2026-11-25
 
 ### Added
