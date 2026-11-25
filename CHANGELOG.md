@@ -3,7 +3,7 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.6.0] - 2026-11-25
 
 ### Added
 
