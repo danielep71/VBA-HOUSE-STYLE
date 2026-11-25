@@ -32,7 +32,7 @@
 | 🧱 | **Body sections** | `DECLARE` → `INITIALIZE` → task sections → `EXIT PROCEDURE` → `ERROR HANDLER` |
 | ↘️ | **Two-level indent** | One-line intent comment at 4 spaces, code at 8 |
 | 📐 | **Aligned declarations** | `As` and the trailing `'comment` in fixed columns; explicit `Public` / `Private` / `Friend`; module constants in `UPPER_SNAKE_CASE` |
-| 🔤 | **Qualified built-ins** | `VBA.Len`, `VBA.Trim$`, `VBA.CStr`… |
+| 🔤 | **Optional `VBA.`** | `Len` and `VBA.Len` are both accepted; qualify when a reference may go missing or a name collides |
 | ↩️ | **CRLF, no tabs** | No trailing whitespace; the `.frm` designer block is never touched |
 | 🛡️ | **Behavior preserving** | Formatting never renames public members, changes signatures or alters logic |
 
@@ -53,7 +53,7 @@ An excerpt from [`M_Example.bas`](skills/vba-house-style/references/M_Example.ba
 ' VALIDATE INPUTS
 '------------------------------------------------------------------------------
     'Reject a blank name
-        If VBA.Len(NormalizedName) = 0 Then
+        If Len(NormalizedName) = 0 Then
             Err.Raise vbObjectError + EX_ERR_BLANK_NAME, PROC_NAME, _
                 "PersonName cannot be blank"
         End If
@@ -97,7 +97,7 @@ python skills\vba-house-style\scripts\check_vba_style.py --fix src\    # normali
 | Level | Flags |
 |---|---|
 | ❌ **ERROR** | not CRLF · missing final CRLF · `VB_Name` ≠ file name · no `Option Explicit` · tabs · trailing whitespace · banner ≠ 79 chars |
-| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 · `Next` without its counter · `:` between statements · `InStr` / `StrComp` without a compare mode · parameters without `ByVal`/`ByRef` or `As` · function without `As` · `= ""` instead of `vbNullString` · procedure without `Public` / `Private` / `Friend` · module-level constant not `UPPER_SNAKE_CASE` · `As` or trailing `'comment` not aligned within a group of declarations (module top and `DECLARE` sections) · procedure title not UPPERCASE or not centered in the 78 columns · section label not UPPERCASE, not one space after the apostrophe, or without its opening or closing banner line · `Len`, `Trim$`, `CStr`… without `VBA.` · `Select Case` without `Case Else` · local variable with a Hungarian prefix (`strName`) or not PascalCase · local variables or error handler without a `DECLARE` section · `DECLARE` not starting with `Const PROC_NAME` or a `PROC_NAME` other than `<Component>.<Procedure>` · first `On Error GoTo` outside `INITIALIZE` · error label not at column 0 · body sections out of order · no `Exit Sub/Function/Property` in `EXIT PROCEDURE` before the error label (one-line and compact `Private` procedures exempt) |
+| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 · `Next` without its counter · `:` between statements · `InStr` / `StrComp` without a compare mode · parameters without `ByVal`/`ByRef` or `As` · function without `As` · `= ""` instead of `vbNullString` · procedure without `Public` / `Private` / `Friend` · module-level constant not `UPPER_SNAKE_CASE` · `As` or trailing `'comment` not aligned within a group of declarations (module top and `DECLARE` sections) · procedure title not UPPERCASE or not centered in the 78 columns · section label not UPPERCASE, not one space after the apostrophe, or without its opening or closing banner line · `Select Case` without `Case Else` · local variable with a Hungarian prefix (`strName`) or not PascalCase · local variables or error handler without a `DECLARE` section · `DECLARE` not starting with `Const PROC_NAME` or a `PROC_NAME` other than `<Component>.<Procedure>` · first `On Error GoTo` outside `INITIALIZE` · error label not at column 0 · body sections out of order · no `Exit Sub/Function/Property` in `EXIT PROCEDURE` before the error label (one-line and compact `Private` procedures exempt) |
 
 `--fix` touches whitespace and line endings only, never code, and skips the
 `.frm` designer block. The exit code is `1` while any error remains.

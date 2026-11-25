@@ -134,24 +134,24 @@ Public Function M_Greeting_Build( _
 ' NORMALIZE INPUTS
 '------------------------------------------------------------------------------
     'Ignore surrounding spaces
-        NormalizedName = VBA.Trim$(PersonName)
+        NormalizedName = Trim$(PersonName)
     'Title-case the name for the formal style
         If Style = EX_GreetingFormal Then
-            NormalizedName = VBA.StrConv(NormalizedName, vbProperCase)
+            NormalizedName = StrConv(NormalizedName, vbProperCase)
         End If
 
 '------------------------------------------------------------------------------
 ' VALIDATE INPUTS
 '------------------------------------------------------------------------------
     'Reject a blank name
-        If VBA.Len(NormalizedName) = 0 Then
+        If Len(NormalizedName) = 0 Then
             Err.Raise vbObjectError + EX_ERR_BLANK_NAME, PROC_NAME, _
                 "PersonName cannot be blank"
         End If
     'Reject a name longer than the supported maximum
-        If VBA.Len(NormalizedName) > EX_MAX_NAME_LENGTH Then
+        If Len(NormalizedName) > EX_MAX_NAME_LENGTH Then
             Err.Raise vbObjectError + EX_ERR_LONG_NAME, PROC_NAME, _
-                "PersonName cannot exceed " & VBA.CStr(EX_MAX_NAME_LENGTH) & _
+                "PersonName cannot exceed " & CStr(EX_MAX_NAME_LENGTH) & _
                 " characters"
         End If
 
@@ -223,7 +223,7 @@ Private Function M_Greeting_GetPrefix() As String
 ' RESOLVE
 '------------------------------------------------------------------------------
     'Use the default when nothing is configured
-        If VBA.LenB(mEX_Prefix) = 0 Then
+        If LenB(mEX_Prefix) = 0 Then
             M_Greeting_GetPrefix = EX_DEFAULT_PREFIX
         Else
             M_Greeting_GetPrefix = mEX_Prefix
