@@ -953,6 +953,14 @@ class CheckerTest(unittest.TestCase):
                 else:
                     self.assertNoFinding(findings, "INPUTS")
 
+    def test_names_that_start_with_none_or_nothing_are_not_the_sentinel(self) -> None:
+        signature = "Public Sub M_Test_A(ByVal NoneValue As String, ByVal Count As Long)"
+        findings = self.header_check(signature, {"INPUTS": "NoneValue"})
+        self.assertNoFinding(findings, "INPUTS is None")
+        self.assertFinding(findings, "INPUTS does not list Count")
+        findings = self.header_check(text={"RETURNS": "NothingFound flag"})
+        self.assertFinding(findings, "RETURNS of a Sub is not Nothing")
+
     def test_property_let_lists_its_value_parameter(self) -> None:
         findings = self.header_check("Public Property Let Count(ByVal Value As Long)",
                                      {"INPUTS": "Value"}, end="End Property")

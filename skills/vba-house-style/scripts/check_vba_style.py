@@ -294,7 +294,7 @@ def field_value_problems(lines: list[str], first: int, last: int,
                         f"UPDATED {value or '(empty)'} is not a YYYY-MM-DD date"))
     if kind == "sub" and fields.get("RETURNS", (0, []))[1]:
         at, text = fields["RETURNS"]
-        if not text[0][1][1:].strip().startswith("Nothing"):
+        if not re.match(r"Nothing\b", text[0][1][1:].strip()):
             out.append((text[0][0] + 1, "RETURNS of a Sub is not Nothing"))
     if "INPUTS" not in fields or not fields["INPUTS"][1]:
         return out
@@ -307,7 +307,7 @@ def field_value_problems(lines: list[str], first: int, last: int,
         return out
     if params is None:
         return out
-    if first_text.startswith("None"):
+    if re.match(r"None\b", first_text):
         if params:
             out.append((text[0][0] + 1, f"INPUTS is None but the signature "
                         f"declares {', '.join(params)}"))
