@@ -20,22 +20,27 @@ spec.loader.exec_module(cvs)
 BANNER = "'" + "-" * 78
 FIELD_TEXT = {f: "None" for f in cvs.FIELDS}
 FIELD_TEXT["UPDATED"] = "2026-01-15"
+FIELD_TEXT["RETURNS"] = "Nothing"
+MODULE_TEXT = {"INPUTS": "None at module level"}
 
 
-def header(fields: list[str], title: str | None = None) -> list[str]:
+def header(fields: list[str], title: str | None = None,
+           text: dict[str, str] | None = None) -> list[str]:
     """A header block with the given labels, each followed by its text."""
+    values = {**FIELD_TEXT, **(text or {})}
     out = ["'", BANNER]
     if title:
         out += [title, BANNER]
     for n, field in enumerate(fields):
         if n:
             out.append("'")
-        out += [f"' {field}", f"'   {FIELD_TEXT.get(field, 'Text')}"]
+        out += [f"' {field}", f"'   {values.get(field, 'Text')}"]
     return out + [BANNER]
 
 
 def module(name: str, body: list[str], component: list[str] | None = None) -> str:
-    comp = component if component is not None else header(cvs.FIELDS, f"' MODULE: {name}")
+    comp = component if component is not None else header(
+        cvs.FIELDS, f"' MODULE: {name}", MODULE_TEXT)
     lines = [f'Attribute VB_Name = "{name}"', "", "Option Explicit", ""] + comp + [""] + body
     return "\r\n".join(lines) + "\r\n"
 
@@ -147,7 +152,7 @@ class CheckerTest(unittest.TestCase):
 
     def test_extra_section_before_updated(self) -> None:
         fields = cvs.FIELDS[:-1] + ["PUBLIC SURFACE", "UPDATED"]
-        comp = header(fields, "' MODULE: M_Test")
+        comp = header(fields, "' MODULE: M_Test", MODULE_TEXT)
         self.assertEqual(self.run_check(module("M_Test", [], component=comp)), [])
 
     def test_extra_section_too_early(self) -> None:
@@ -872,6 +877,127 @@ class CheckerTest(unittest.TestCase):
     def test_rem_trailing_a_declaration_is_exempt_from_line_length(self) -> None:
         line = "    Private mIsBusy" + " " * 20 + "As Boolean" + " " * 5 + ": Rem " + "y" * 100
         self.assertNoFinding(self.run_check(module("M_Test", [line])), "line is")
+
+    # Header field values (#29).
+    def header_check(self, signature: str = "Public Sub M_Test_A()",
+                     text: dict[str, str] | None = None,
+                     fields: list[str] | None = None, end: str = "End Sub",
+                     component: list[str] | None = None, name: str = "M_Test",
+                     suffix: str = ".bas") -> list[str]:
+        title = "'" + " " * 35 + "DO WORK"
+        proc = [signature, ""] + header(fields or cvs.FIELDS, title, text) + [
+            "", "        Debug.Print 1", "", end]
+        return self.run_check(module(name, proc, component), name, suffix)
+
+    PARAMS_SIGNATURE = ("Public Sub M_Test_A( _\r\n"
+                        "    ByVal Name As String, _\r\n"
+                        "    Optional ByVal Mode As Long = 0, _\r\n"
+                        "    ParamArray Rest() As Variant)")
+    PARAMS_INPUTS = ("Name\r\n'     Person to greet\r\n'\r\n"
+                     "'   Mode\r\n'     Optional style\r\n'       - 0 plain\r\n'\r\n"
+                     "'   Rest\r\n'     Extra values")
+
+    def test_header_values_that_follow_the_skill_are_silent(self) -> None:
+        findings = self.header_check(self.PARAMS_SIGNATURE, {"INPUTS": self.PARAMS_INPUTS})
+        self.assertEqual(findings, [])
+
+    def test_updated_that_is_not_a_date_warns(self) -> None:
+        for value in ("2026-02-30", "15/01/2026", "2026-1-5", "Today"):
+            with self.subTest(value=value):
+                findings = self.header_check(text={"UPDATED": value})
+                self.assertFinding(findings, f"UPDATED {value} is not a YYYY-MM-DD date")
+
+    def test_real_dates_are_silent(self) -> None:
+        for value in ("2024-02-29", "2026-12-31"):
+            with self.subTest(value=value):
+                self.assertNoFinding(self.header_check(text={"UPDATED": value}), "UPDATED")
+
+    def test_component_updated_is_checked(self) -> None:
+        comp = header(cvs.FIELDS, "' MODULE: M_Test", {**MODULE_TEXT, "UPDATED": "soon"})
+        findings = self.run_check(module("M_Test", [], component=comp))
+        self.assertFinding(findings, "component UPDATED soon is not a YYYY-MM-DD date")
+
+    def test_sub_that_does_not_return_nothing_warns(self) -> None:
+        findings = self.header_check(text={"RETURNS": "The count"})
+        self.assertFinding(findings, "RETURNS of a Sub is not Nothing")
+
+    def test_returns_of_functions_and_nothing_with_text_are_silent(self) -> None:
+        findings = self.header_check("Public Function M_Test_A() As Long",
+                                     {"RETURNS": "The count"}, end="End Function")
+        self.assertNoFinding(findings, "RETURNS")
+        findings = self.header_check(text={"RETURNS": "Nothing; the result goes to the sheet"})
+        self.assertNoFinding(findings, "RETURNS")
+
+    def test_inputs_missing_a_parameter_warns(self) -> None:
+        findings = self.header_check(self.PARAMS_SIGNATURE, {"INPUTS": "Name\r\n'\r\n'   Rest"})
+        self.assertFinding(findings, "M_Test_A: INPUTS does not list Mode")
+
+    def test_inputs_listing_a_name_outside_the_signature_warns(self) -> None:
+        text = {"INPUTS": self.PARAMS_INPUTS + "\r\n'\r\n'   Count"}
+        findings = self.header_check(self.PARAMS_SIGNATURE, text)
+        self.assertFinding(findings, "M_Test_A: INPUTS lists Count, not in the signature")
+        findings = self.header_check(text={"INPUTS": "Count"})
+        self.assertFinding(findings, "INPUTS lists Count, not in the signature")
+
+    def test_inputs_none_with_parameters_warns(self) -> None:
+        findings = self.header_check(self.PARAMS_SIGNATURE)
+        self.assertFinding(findings, "INPUTS is None but the signature declares Name, Mode, Rest")
+
+    def test_inputs_that_cannot_be_read_and_case_differences_are_silent(self) -> None:
+        signature = "Public Sub M_Test_A(ByVal Name As String)"
+        for inputs in ("Name - the person to greet", "name", "None of the callers pass it"):
+            with self.subTest(inputs=inputs):
+                findings = self.header_check(signature, {"INPUTS": inputs})
+                if inputs.startswith("None"):
+                    self.assertFinding(findings, "INPUTS is None")
+                else:
+                    self.assertNoFinding(findings, "INPUTS")
+
+    def test_property_let_lists_its_value_parameter(self) -> None:
+        findings = self.header_check("Public Property Let Count(ByVal Value As Long)",
+                                     {"INPUTS": "Value"}, end="End Property")
+        self.assertNoFinding(findings, "INPUTS")
+        self.assertNoFinding(findings, "RETURNS")
+
+    def test_compact_header_checks_only_the_fields_present(self) -> None:
+        signature = "Private Sub M_Test_A(ByVal Name As String)"
+        findings = self.header_check(signature, fields=["PURPOSE", "UPDATED"])
+        self.assertNoFinding(findings, "INPUTS")
+        findings = self.header_check(signature, {"RETURNS": "The name"},
+                                     fields=["PURPOSE", "RETURNS", "UPDATED"])
+        self.assertFinding(findings, "RETURNS of a Sub is not Nothing")
+
+    def test_component_inputs_wording_warns(self) -> None:
+        comp = header(cvs.FIELDS, "' MODULE: M_Test")
+        findings = self.run_check(module("M_Test", [], component=comp))
+        self.assertFinding(findings, "component INPUTS is not 'None at module level'")
+        comp = header(cvs.FIELDS, "' CLASS: C_Test", MODULE_TEXT)
+        findings = self.run_check(module("C_Test", [], component=comp), "C_Test", ".cls")
+        self.assertFinding(findings, "component INPUTS is not 'None at class level'")
+
+    def test_component_inputs_at_module_and_class_level_are_silent(self) -> None:
+        self.assertNoFinding(self.run_check(module("M_Test", [])), "INPUTS")
+        comp = header(cvs.FIELDS, "' CLASS: C_Test", {"INPUTS": "None at class level."})
+        findings = self.run_check(module("C_Test", [], component=comp), "C_Test", ".cls")
+        self.assertNoFinding(findings, "INPUTS")
+
+    def test_field_text_not_at_three_spaces_warns(self) -> None:
+        for text in ("'  Two spaces", "'    Four spaces", "'Flush"):
+            with self.subTest(text=text):
+                comp = header(cvs.FIELDS, "' MODULE: M_Test", MODULE_TEXT)
+                comp[comp.index("' PURPOSE") + 1] = text
+                findings = self.run_check(module("M_Test", [], component=comp))
+                self.assertFinding(findings, "component PURPOSE text not at 3 spaces")
+
+    def test_deeper_continuation_lines_are_silent(self) -> None:
+        text = {"BEHAVIOR": "Manages:\r\n'     - a prefix\r\n'       detail"}
+        self.assertNoFinding(self.header_check(text=text), "text not at 3 spaces")
+
+    def test_header_value_findings_do_not_change_errors(self) -> None:
+        text = {"UPDATED": "soon", "RETURNS": "A value", "INPUTS": "Count"}
+        findings = self.header_check(text=text)
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
     # --fix.
     def test_fix_changes_whitespace_only(self) -> None:
