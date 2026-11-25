@@ -105,6 +105,8 @@ ELSE_RE = re.compile(r"Else\s*$", re.I)
 CASE_RE = re.compile(r"Case\b", re.I)
 THEN_END_RE = re.compile(r"\bThen$", re.I)
 SEPARATOR_RE = re.compile(r":(?!=)")
+CC_IF_RE = re.compile(r"#\s*If\b", re.I)
+CC_END_IF_RE = re.compile(r"#\s*End\s*If\b", re.I)
 
 
 def code_start(lines: list[str]) -> int:
@@ -359,12 +361,14 @@ def indent_problems(lines: list[str], first: int, last: int) -> list[tuple[int, 
     (line number, message). A statement sits at 8 spaces plus 4 per open
     block; an intent comment outside any block sits at 4. Continuation
     lines, labels, #If lines and comments inside a block are not checked.
-    One finding per section and kind. When a line cannot be classified, or
-    the blocks do not balance, the procedure is not reported."""
+    One finding per section and kind. When a line cannot be classified, the
+    blocks do not balance, or a statement inside #If ... #End If opens or
+    closes a block, the procedure is not reported."""
     sections = {at: title for title, at in body_sections(lines, first, last)}
     if not sections:
         return []
     stack: list[str] = []
+    conditional = 0                 # open #If ... #End If regions
     title: str | None = None
     bad: dict[tuple[str, str], list[tuple[int, int, int]]] = {}
     n = first
@@ -385,11 +389,20 @@ def indent_problems(lines: list[str], first: int, last: int) -> list[tuple[int, 
             if checked and not stack and is_intent_comment(line) and lead != INTENT_INDENT:
                 bad.setdefault((title, "intent comment"), []).append(
                     (n + 1, lead, INTENT_INDENT))
-        elif not code.startswith("#") and not LABEL_LINE_RE.match(code):
+        elif code.startswith("#"):
+            if CC_IF_RE.match(code):
+                conditional += 1
+            elif CC_END_IF_RE.match(code):
+                conditional -= 1
+        elif not LABEL_LINE_RE.match(code):
             if SEPARATOR_RE.search(code) or code[0].isdigit():
                 return []
+            before = list(stack)
             level = block_step(code, stack)
             if level is None or level < 0:
+                return []
+            # Alternative #If branches may open or close blocks differently.
+            if conditional > 0 and stack != before:
                 return []
             want = CODE_INDENT + INDENT_STEP * level
             if checked and lead != want:

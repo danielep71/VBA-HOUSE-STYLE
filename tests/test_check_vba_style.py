@@ -809,6 +809,17 @@ class CheckerTest(unittest.TestCase):
                 findings = self.sections(DECLARE, ("DO WORK", code))
                 self.assertNoFinding(findings, "indented")
 
+    def test_blocks_chosen_by_conditional_compilation_are_silent(self) -> None:
+        code = ["    'Pick the branch", "#If VBA7 Then", "        If Ready Then", "#Else",
+                "        If Done Then", "#End If", "            Debug.Print 1",
+                "#If VBA7 Then", "        End If", "#Else", "        End If", "#End If",
+                "    'Off", "      Debug.Print 2"]
+        self.assertNoFinding(self.sections(DECLARE, ("DO WORK", code)), "indented")
+        plain = ["    'Pick the branch", "#If VBA7 Then", "        Debug.Print 1", "#Else",
+                 "      Debug.Print 2", "#End If"]
+        self.assertFinding(self.sections(DECLARE, ("DO WORK", plain)),
+                           "statement indented 6 spaces, expected 8")
+
     def test_next_closing_two_loops(self) -> None:
         code = ["    'Walk the grid", "        For Row = 1 To 2", "            For Col = 1 To 2",
                 "                Debug.Print Row, Col", "        Next Col, Row",

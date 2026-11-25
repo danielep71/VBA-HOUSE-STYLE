@@ -15,8 +15,9 @@ Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
   `Select Case` / `Case` / `End Select`; a one-line `If` is not a block.
   Continuation lines, labels, `#If` lines, comments inside a block and
   commented-out code are not checked. A procedure with `:` between
-  statements, a line number or unbalanced blocks is not reported. One
-  finding per section and kind. Exit code and `--fix` are unchanged.
+  statements, a line number, unbalanced blocks or a block opened or closed
+  inside `#If` ... `#End If` is not reported. One finding per section and
+  kind. Exit code and `--fix` are unchanged.
 
 ### Documentation
 

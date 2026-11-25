@@ -265,7 +265,8 @@ at 8 spaces. Nested blocks add 4 spaces per level from there.
   finding per section and kind. Continuation lines, labels, `#If` lines,
   comments inside a block and commented-out code (`'` followed by spaces)
   are not checked; a procedure with a line it cannot classify (`:` between
-  statements, a line number) or with unbalanced blocks is not reported.
+  statements, a line number), with unbalanced blocks, or with a block opened
+  or closed inside `#If` ... `#End If` is not reported.
 
 ### Error handling pattern
 
