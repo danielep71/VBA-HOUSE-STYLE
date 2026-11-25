@@ -79,6 +79,34 @@ UPPER_SNAKE_RE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 ALIGN_DECL_RE = re.compile(
     r"\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+(?:Const\s+)?|Const\s+)"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+(As)\s+", re.I)
+# Statement indentation (SKILL.md section 6): the intent comment at 4 spaces,
+# the code at 8, 4 more per open block. Select Case opens two levels: Case
+# sits one level in, its body two.
+INTENT_INDENT, CODE_INDENT, INDENT_STEP = 4, 8, 4
+BLOCK_OPEN_RE = {
+    "For": re.compile(r"For\b", re.I),
+    "Do": re.compile(r"Do\b", re.I),
+    "While": re.compile(r"While\b", re.I),
+    "With": re.compile(r"With\b", re.I),
+    "Select": re.compile(r"Select\s+Case\b", re.I),
+}
+BLOCK_CLOSE_RE = {
+    "If": re.compile(r"End\s*If\b", re.I),
+    "For": re.compile(r"Next\b", re.I),
+    "Do": re.compile(r"Loop\b", re.I),
+    "While": re.compile(r"Wend\b", re.I),
+    "With": re.compile(r"End\s+With\b", re.I),
+    "Select": re.compile(r"End\s+Select\b", re.I),
+}
+BLOCK_LEVELS = {"Select": 2}
+IF_RE = re.compile(r"If\b", re.I)
+ELSEIF_RE = re.compile(r"ElseIf\b", re.I)
+ELSE_RE = re.compile(r"Else\s*$", re.I)
+CASE_RE = re.compile(r"Case\b", re.I)
+THEN_END_RE = re.compile(r"\bThen$", re.I)
+SEPARATOR_RE = re.compile(r":(?!=)")
+CC_IF_RE = re.compile(r"#\s*If\b", re.I)
+CC_END_IF_RE = re.compile(r"#\s*End\s*If\b", re.I)
 
 
 def code_start(lines: list[str]) -> int:
@@ -280,6 +308,116 @@ def body_problems(lines: list[str], stmts: list[tuple[int, str]], first: int,
     return problems
 
 
+def is_intent_comment(line: str) -> bool:
+    """A comment line whose text starts right after the apostrophe. Banner
+    lines, section labels (' TITLE), lone apostrophes and commented-out code
+    (an apostrophe followed by spaces) are not intent comments."""
+    text = line.lstrip(" ")
+    return text.startswith("'") and text[1:2] not in ("", " ") \
+        and not BANNER_RE.match(text)
+
+
+def block_step(code: str, stack: list[str]) -> int | None:
+    """Apply one statement to the stack of open blocks and return the level
+    at which the statement sits, or None when the statement cannot be
+    classified (the caller then stays silent)."""
+    depth = sum(BLOCK_LEVELS.get(k, 1) for k in stack)
+    for kind, close in BLOCK_CLOSE_RE.items():
+        if close.match(code):
+            count = 1
+            if kind == "For":
+                counters = code[4:].strip()
+                count = len(split_args(counters)) if counters else 1
+            for _ in range(count):
+                if not stack or stack[-1] != kind:
+                    return None
+                stack.pop()
+            return sum(BLOCK_LEVELS.get(k, 1) for k in stack)
+    if ELSEIF_RE.match(code):
+        ok = stack and stack[-1] == "If" and THEN_END_RE.search(code)
+        return depth - 1 if ok else None
+    if ELSE_RE.match(code):
+        return depth - 1 if stack and stack[-1] == "If" else None
+    if re.match(r"Else\b", code, re.I):
+        return None
+    if CASE_RE.match(code):
+        return depth - 1 if stack and stack[-1] == "Select" else None
+    if IF_RE.match(code):
+        if THEN_END_RE.search(code):
+            stack.append("If")
+        elif not re.search(r"\bThen\b", code, re.I):
+            return None
+        return depth
+    for kind, opener in BLOCK_OPEN_RE.items():
+        if opener.match(code):
+            stack.append(kind)
+            break
+    return depth
+
+
+def indent_problems(lines: list[str], first: int, last: int) -> list[tuple[int, str]]:
+    """Statements and intent comments out of indentation in the body
+    sections of lines[first:last], except DECLARE (SKILL.md section 6), as
+    (line number, message). A statement sits at 8 spaces plus 4 per open
+    block; an intent comment outside any block sits at 4. Continuation
+    lines, labels, #If lines and comments inside a block are not checked.
+    One finding per section and kind. When a line cannot be classified, the
+    blocks do not balance, or a statement inside #If ... #End If opens or
+    closes a block, the procedure is not reported."""
+    sections = {at: title for title, at in body_sections(lines, first, last)}
+    if not sections:
+        return []
+    stack: list[str] = []
+    conditional = 0                 # open #If ... #End If regions
+    title: str | None = None
+    bad: dict[tuple[str, str], list[tuple[int, int, int]]] = {}
+    n = first
+    while n < last:
+        title = sections.get(n, title)
+        line = lines[n]
+        lead = len(line) - len(line.lstrip(" "))
+        code = code_view(tokenize(line))
+        stop = n
+        while code.endswith(" _") and stop + 1 < last:
+            stop += 1
+            code = code[:-1] + " " + code_view(tokenize(lines[stop])).strip()
+        code = code.strip()
+        checked = title is not None and title != "DECLARE"
+        if line[lead:lead + 1] == "\t":
+            return []
+        if not code:
+            if checked and not stack and is_intent_comment(line) and lead != INTENT_INDENT:
+                bad.setdefault((title, "intent comment"), []).append(
+                    (n + 1, lead, INTENT_INDENT))
+        elif code.startswith("#"):
+            if CC_IF_RE.match(code):
+                conditional += 1
+            elif CC_END_IF_RE.match(code):
+                conditional -= 1
+        elif not LABEL_LINE_RE.match(code):
+            if SEPARATOR_RE.search(code) or code[0].isdigit():
+                return []
+            before = list(stack)
+            level = block_step(code, stack)
+            if level is None or level < 0:
+                return []
+            # Alternative #If branches may open or close blocks differently.
+            if conditional > 0 and stack != before:
+                return []
+            want = CODE_INDENT + INDENT_STEP * level
+            if checked and lead != want:
+                bad.setdefault((title, "statement"), []).append((n + 1, lead, want))
+        n = stop + 1
+    if stack:
+        return []
+    out: list[tuple[int, str]] = []
+    for (section, kind), found in bad.items():
+        line_no, got, want = found[0]
+        more = f"; {len(found) - 1} more in {section}" if len(found) > 1 else ""
+        out.append((line_no, f"{kind} indented {got} spaces, expected {want}{more}"))
+    return sorted(out)
+
+
 def fix(raw: bytes) -> bytes:
     text = raw.decode("latin-1").replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
@@ -401,6 +539,8 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             first = next((n + 1 for n in range(updated, end) if BANNER_RE.match(lines[n])), first)
             banners_from = first
         for line_no, msg in banner_problems(lines, banners_from, end):
+            add("WARN", line_no, f"{name}: {msg}")
+        for line_no, msg in indent_problems(lines, first, end):
             add("WARN", line_no, f"{name}: {msg}")
         if not compact and body > TRIVIAL_MAX:
             stmts = [(n, statements[n]) for n in range(k + 1, end) if n in statements]
