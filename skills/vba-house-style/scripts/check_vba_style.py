@@ -667,6 +667,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             add("WARN", line_no, msg)
     statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
     procs: list[tuple[int, int]] = []
+    documented: set[int] = set()       # signature lines of procedures with a header
     i = start
     while i < len(lines):
         m = PROC_RE.match(lines[i])
@@ -729,7 +730,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                 add("WARN", sig_line, f"{name}: {header_at - k - 1} blank lines after "
                                       f"the signature, expected {want}")
             blanks, above = blanks_above(lines, end)
-            if above >= h and blanks != 1:
+            if end < len(lines) and above >= h and blanks != 1:
                 add("WARN", end + 1, f"{name}: {blanks} blank lines before "
                                      f"{lines[end].strip()}, expected 1")
         for line_no, msg in indent_problems(lines, first, end):
@@ -747,6 +748,8 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                     for line_no, msg in alignment_problems(lines, at, stop):
                         add("WARN", line_no, f"{name}: {msg}")
         procs.append((i, end))
+        if header:
+            documented.add(i)
         i = end + 1
     # Group banner blocks (SKILL.md section 6): one blank line after the
     # previous End, two after the declarations, one before the signature.
@@ -764,7 +767,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         while below < len(lines) and lines[below].strip() == "":
             below += 1
         sig = PROC_RE.match(lines[below]) if below < len(lines) else None
-        if sig and below - last_line - 1 != 1:
+        if sig and below in documented and below - last_line - 1 != 1:
             add("WARN", below + 1, f"{sig.group(2)}: {below - last_line - 1} blank lines "
                                    "after the group banner, expected 1")
     out += statement_findings(lines, start)

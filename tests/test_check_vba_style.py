@@ -1125,6 +1125,17 @@ class CheckerTest(unittest.TestCase):
         self.assertFinding(findings, "M_Test_A: header missing")
         self.assertNoFinding(findings, "blank line")
 
+    def test_group_banner_before_a_procedure_without_a_header_is_not_checked(self) -> None:
+        proc = ["Private Sub M_Test_A()", "        Debug.Print 1", "End Sub"]
+        findings = self.run_check(module("M_Test", self.GROUP + proc))
+        self.assertFinding(findings, "M_Test_A: header missing")
+        self.assertNoFinding(findings, "after the group banner")
+
+    def test_indented_end_on_the_last_procedure_does_not_crash(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        findings = self.run_check(module("M_Test", proc[:-1] + ["    End Sub"]))
+        self.assertNoFinding(findings, "before End")
+
     def test_blank_lines_between_logical_groups_are_silent(self) -> None:
         task = ("DO WORK", ["    'Count once", "        Debug.Print 1", "",
                             "    'Count twice", "        Debug.Print 2"])
