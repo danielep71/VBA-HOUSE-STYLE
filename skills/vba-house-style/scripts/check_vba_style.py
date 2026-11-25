@@ -719,9 +719,9 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             banners_from = first
         for line_no, msg in banner_problems(lines, banners_from, end):
             add("WARN", line_no, f"{name}: {msg}")
-        for line_no, msg in section_spacing_problems(lines, banners_from, end):
-            add("WARN", line_no, f"{name}: {msg}")
         if header:
+            for line_no, msg in section_spacing_problems(lines, banners_from, end):
+                add("WARN", line_no, f"{name}: {msg}")
             # Blank lines around the header (SKILL.md section 6): one after a
             # one-line signature, none after a multi-line one, one before End.
             want = 0 if k > i else 1
