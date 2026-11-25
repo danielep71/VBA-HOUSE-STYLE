@@ -1,6 +1,6 @@
 {
   "name": "vba-house-style",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Format, write or review exported VBA source (.bas, .cls, .frm) in a fixed house style.",
   "author": {
     "name": "Daniele Penza"
