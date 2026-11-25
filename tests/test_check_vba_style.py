@@ -410,74 +410,18 @@ class CheckerTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
-    # VBA. qualification.
-    def test_each_unqualified_library_call_warns(self) -> None:
-        for name in cvs.VBA_QUALIFIED:
+    # The VBA. qualifier is optional: neither form is reported (#20).
+    def test_qualified_and_plain_library_calls_are_both_silent(self) -> None:
+        for name in ("Len", "LenB", "Trim$", "UCase$", "LCase", "Left$", "Right$", "Mid$",
+                     "InStr", "CStr", "CLng", "CDate"):
             with self.subTest(name=name):
-                findings = self.statements(f"Result = {name}(Text)")
-                self.assertFinding(findings, f"use VBA.{name} instead of {name}")
+                findings = self.statements(f"Result = {name}(Text)",
+                                           f"Result = VBA.{name}(Text)")
+                self.assertNoFinding(findings, "VBA.")
+                self.assertNoFinding(findings, "instead of")
 
-    def test_each_name_is_silent_qualified_as_member_in_text_or_declared(self) -> None:
-        for name in cvs.VBA_QUALIFIED:
-            base = name.rstrip("$")
-            with self.subTest(name=name):
-                findings = self.statements(
-                    f"Result = VBA.{name}(Text)", f"Result = Item.{name}(Text)",
-                    f"Result = Item!{name}", f"Result = .{name}(Text)",
-                    f'Message = "{name}(Text)"', f"'{name}(Text)",
-                    f"Result = 1 ' {name}(Text)", f"Run {base}:=1")
-                self.assertNoFinding(findings, "use VBA.")
-                findings = self.statements(f"Dim {base} As Long", f"Result = {name}(1)")
-                self.assertNoFinding(findings, "use VBA.")
-
-    def test_names_declared_by_the_file_are_silent(self) -> None:
-        proc = procedure("Private Function Trim(ByVal Text As String) As String",
-                         ["PURPOSE", "UPDATED"])
-        decl = ["Private Declare PtrSafe Function CStr Lib \"x\" () As Long",
-                "Public Event LCase(ByVal Len As Long)",
-                "Private Enum E_Kind", "    CLng = 1", "End Enum",
-                "Private Type T_Item", "    CDbl As Double", "End Type", ""]
-        body = ["        Result = Trim$(Text) & Len(Text) & CStr() & CLng & CDbl"]
-        findings = self.run_check(module("M_Test", decl + proc[:-2] + body + proc[-2:]))
-        self.assertNoFinding(findings, "use VBA.")
-        findings = self.statements("Result = Len(Text)",
-                                   signature="Public Sub M_Test_A(ByVal Len As Long)")
-        self.assertNoFinding(findings, "use VBA.")
-
-    def test_name_case_and_spelling_are_reported(self) -> None:
-        findings = self.statements("Result = ucase$(Text)")
-        self.assertFinding(findings, "use VBA.UCase$ instead of ucase$")
-
-    def test_mid_statement_and_bare_left_right_are_silent(self) -> None:
-        findings = self.statements('Mid$(Text, 1, 1) = "x"', 'If Ok Then Mid$(Text, 1) = "y"',
-                                   'Text = "abc": Mid$(Text, 1, 1) = "x"',
-                                   "Left = 10", "Result = Right(Text, 2)")
-        self.assertNoFinding(findings, "use VBA.")
-        findings = self.statements("Result = Mid$(Text, 1, 1)")
-        self.assertFinding(findings, "use VBA.Mid$ instead of Mid$")
-
-    def test_open_len_clause_and_len_of_a_record_are_silent(self) -> None:
-        findings = self.statements("Dim Record As T_Record", "Dim Records(1 To 2) As T_Record",
-                                   "Open Path For Random As #1 Len = Len(Record)",
-                                   "Size = LenB(Records(1))", "Size = Len(Record.Inner)",
-                                   "Size = LenB(Records(2).Inner)", "Size = Len(.Inner)")
-        self.assertNoFinding(findings, "use VBA.")
-        findings = self.statements("Dim Text As String", "Result = Len(Text.Value)")
-        self.assertFinding(findings, "use VBA.Len instead of Len")
-        findings = self.statements("Dim Count As Long: Dim Record As T_Record",
-                                   "Size = Len(Record)")
-        self.assertNoFinding(findings, "use VBA.")
-        findings = self.statements("Result = Len(Text)",
-                                   signature="Public Sub M_Test_A(ByRef Text As String)")
-        self.assertFinding(findings, "use VBA.Len instead of Len")
-
-    def test_several_names_on_one_line_each_warn(self) -> None:
-        findings = self.statements("Result = UCase$(Trim$(Text)) & Len(Text)")
-        for name in ("UCase$", "Trim$", "Len"):
-            self.assertFinding(findings, f"use VBA.{name} instead of {name}")
-
-    def test_qualification_findings_do_not_change_errors(self) -> None:
-        findings = self.statements("Result = Len(Text)")
+    def test_library_calls_do_not_change_errors(self) -> None:
+        findings = self.statements("Result = Len(Text)", "Result = VBA.Len(Text)")
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
     # Select Case and local names.
@@ -533,6 +477,228 @@ class CheckerTest(unittest.TestCase):
 
     def test_select_and_naming_findings_do_not_change_errors(self) -> None:
         findings = self.statements("Dim strName As String", "Select Case strName", "End Select")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Visibility, constant names and declaration alignment.
+    def declarations(self, *decl: str) -> list[str]:
+        """Check a module whose declarations section holds the given lines."""
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        return self.run_check(module("M_Test", list(decl) + [""] + proc))
+
+    def test_signature_without_visibility_warns(self) -> None:
+        for signature, name in (("Sub M_Test_A()", "M_Test_A"),
+                                ("Function M_Test_A() As Long", "M_Test_A"),
+                                ("Property Get Value() As Long", "Value"),
+                                ("Static Sub M_Test_A()", "M_Test_A")):
+            with self.subTest(signature=signature):
+                findings = self.statements(signature=signature)
+                self.assertFinding(findings, f"WARN {name}: no Public, Private or Friend")
+
+    def test_signature_with_visibility_is_silent(self) -> None:
+        for signature in ("Public Sub M_Test_A()", "Private Sub Class_Initialize()",
+                          "Friend Property Get Value() As Long",
+                          "Public Static Function M_Test_A() As Long",
+                          "private sub M_Test_A()"):
+            with self.subTest(signature=signature):
+                self.assertNoFinding(self.statements(signature=signature), "no Public")
+
+    def test_visibility_follows_a_continued_signature(self) -> None:
+        proc = procedure("Sub M_Test_A(ByVal A As Long, _\r\n    ByVal B As Long)",
+                         cvs.FIELDS)
+        findings = self.run_check(module("M_Test", proc))
+        self.assertFinding(findings, "M_Test_A: no Public, Private or Friend")
+
+    def test_constant_not_upper_snake_case_warns(self) -> None:
+        findings = self.declarations(
+            "    Private Const MaxItems  As Long = 5",
+            "    Public Const maxCount   As Long = 5",
+            "    Const Win_Style         As Long = 1",
+            "    Global Const A_B, Mixed_Case = 3")
+        for name in ("MaxItems", "maxCount", "Win_Style", "Mixed_Case"):
+            self.assertFinding(findings, f"WARN constant {name} is not UPPER_SNAKE_CASE")
+        self.assertNoFinding(findings, "constant A_B")
+
+    def test_upper_snake_case_and_local_constants_are_silent(self) -> None:
+        findings = self.declarations(
+            "    Private Const EX_ERR_NO_OWNER As Long = 1001",
+            "    Public Const GWL_STYLE        As Long = -16",
+            "    Private Const LIMIT2          As Long = 2",
+            "    Private Const SMALL&          = 1",
+            "    #Const DEBUGGING = 1")
+        self.assertNoFinding(findings, "UPPER_SNAKE_CASE")
+        findings = self.statements("Const LocalLimit As Long = 1")
+        self.assertNoFinding(findings, "UPPER_SNAKE_CASE")
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_misaligned_as_warns_once_per_group(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String",
+            "    Private mSecond  As String",
+            "    Private mThird         As String")
+        self.assertFinding(findings, "WARN As is not aligned with its group (column 22, expected 25)")
+        self.assertEqual(sum("As is not aligned" in f for f in findings), 1, findings)
+
+    def test_misaligned_trailing_comment_warns(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String       'First",
+            "    Private mSecond     As String     'Second")
+        self.assertFinding(findings, "WARN trailing comment is not aligned with its group "
+                                     "(column 39, expected 41)")
+        self.assertNoFinding(findings, "As is not aligned")
+
+    def test_aligned_groups_are_silent_across_blank_lines(self) -> None:
+        findings = self.declarations(
+            "    Private Const EX_A     As Long = 1     'First",
+            "    Private Const EX_BB    As String = \"x\" 'Second",
+            "",
+            "    'Error numbers",
+            "    Private Const EX_ERR_X As Long = 1001  'Other column, other group",
+            "    Private Const EX_ERR_Y As Long = 1002  'Other column, other group")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_one_line_group_and_lines_without_a_comment_are_silent(self) -> None:
+        findings = self.declarations(
+            "    Private mOnly       As String       'Alone",
+            "",
+            "    Private mFirst      As String",
+            "    Private mSecond     As String       'Has one")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_groups_end_at_comments_statements_and_continuations(self) -> None:
+        findings = self.declarations(
+            "    Private mFirst      As String",
+            "    'A comment ends the group",
+            "    Private mSecond  As String",
+            "    Private Declare Function Beep Lib \"kernel32\" () As Long",
+            "    Private mThird  As String",
+            "    Private Const EX_TEXT As String = _",
+            "        \"long\"",
+            "    Private mFourth     As String")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_enum_type_and_conditional_members_are_exempt(self) -> None:
+        findings = self.declarations(
+            "    Public Type EX_Rect",
+            "        Left As Long",
+            "        TopEdge          As Long",
+            "    End Type",
+            "    Public Enum EX_Mode",
+            "        EX_ModeA = 0    'A",
+            "        EX_ModeB = 1  'B",
+            "    End Enum",
+            "    #If VBA7 Then",
+            "    Private Declare PtrSafe Function Beep Lib \"kernel32\" ( _",
+            "        ByVal Freq As Long) As Long",
+            "    #End If")
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_declare_section_alignment_is_checked(self) -> None:
+        bad = ("DECLARE", [
+            '    Const PROC_NAME             As String = "M_Test.M_Test_Run"', "",
+            "    Dim Count                   As Long         'Counter",
+            "    Dim Total              As Long    'Sum"])
+        findings = self.sections(bad, TASK)
+        self.assertFinding(findings, "M_Test_Run: As is not aligned with its group")
+        self.assertFinding(findings, "M_Test_Run: trailing comment is not aligned")
+        self.assertEqual(self.sections(DECLARE, TASK), [])
+
+    def test_alignment_outside_declare_sections_is_not_checked(self) -> None:
+        task = ("DO WORK", ["    Dim Count As Long", "    Dim Total          As Long"])
+        findings = self.sections(DECLARE, task)
+        self.assertNoFinding(findings, "not aligned")
+
+    def test_declaration_findings_do_not_change_errors(self) -> None:
+        findings = self.declarations("    Private Const MaxItems As Long = 5",
+                                     "    Private mA    As Long", "    Private mB  As Long")
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Banner labels and procedure titles.
+    def body_with(self, *extra: str, title: str | None = None) -> list[str]:
+        """Check a procedure whose body holds the given column-0 lines."""
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        if title is not None:
+            proc = [proc[0], ""] + header(cvs.FIELDS, title) + proc[-4:]
+        return self.run_check(module("M_Test", proc[:-2] + list(extra) + proc[-2:]))
+
+    def test_title_not_uppercase_warns(self) -> None:
+        findings = self.body_with(title="'" + " " * 35 + "Do Work")
+        self.assertFinding(findings, 'WARN M_Test_A: procedure title "Do Work" is not UPPERCASE')
+
+    def test_title_not_centered_warns(self) -> None:
+        for lead in (0, 1, 34, 36):
+            with self.subTest(lead=lead):
+                findings = self.body_with(title="'" + " " * lead + "DO WORK")
+                self.assertFinding(findings, f'procedure title "DO WORK" is not centered '
+                                             f"({lead} leading spaces, expected 35)")
+
+    def test_centered_titles_of_odd_and_even_length_are_silent(self) -> None:
+        for title in ("DO WORK", "DO WORKS", "A", "X" * 78):
+            with self.subTest(title=title):
+                lead = (78 - len(title)) // 2
+                findings = self.body_with(title="'" + " " * lead + title)
+                self.assertNoFinding(findings, "procedure title")
+
+    def test_header_without_a_title_banner_is_silent(self) -> None:
+        findings = self.run_check(module("M_Test", [
+            "Public Sub M_Test_A()", ""] + header(cvs.FIELDS) + ["", "End Sub"]))
+        self.assertNoFinding(findings, "procedure title")
+
+    def test_section_label_not_uppercase_or_not_left_aligned_warns(self) -> None:
+        findings = self.body_with(BANNER, "' Do work", BANNER, "    'Count once",
+                                  "        Debug.Print 1",
+                                  BANNER, "'DECLARE", BANNER,
+                                  BANNER, "'   EXIT PROCEDURE", BANNER)
+        self.assertFinding(findings, 'WARN M_Test_A: section label "Do work" is not UPPERCASE')
+        self.assertFinding(findings, 'section label "DECLARE" is not left-aligned')
+        self.assertFinding(findings, 'section label "EXIT PROCEDURE" is not left-aligned')
+
+    def test_section_labels_are_checked_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module(
+            "M_Test", proc[:-2] + [BANNER, "' Do work", BANNER] + proc[-2:]))
+        self.assertFinding(findings, "header missing UPDATED")
+        self.assertFinding(findings, 'WARN M_Test_A: section label "Do work" is not UPPERCASE')
+
+    def test_header_fields_are_not_read_as_labels_when_updated_is_missing(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS[:-1])
+        findings = self.run_check(module("M_Test", proc))
+        self.assertNoFinding(findings, "section label")
+
+    def test_section_label_in_the_module_top_is_checked(self) -> None:
+        findings = self.declarations(BANNER, "' Private constants", BANNER,
+                                     "    Private Const EX_A As Long = 1")
+        self.assertFinding(findings, 'WARN section label "Private constants" is not UPPERCASE')
+
+    def test_standard_and_task_labels_are_silent(self) -> None:
+        sections = [(name, ["    'Do it", "        Debug.Print 1"]) for name in (
+            "DECLARE", "INITIALIZE", "VALIDATE INPUTS", "STEP 2 / 3", "LOAD SETTINGS & STATE",
+            "EXIT PROCEDURE", "ERROR HANDLER")]
+        findings = self.sections(*sections)
+        self.assertNoFinding(findings, "section label")
+
+    def test_broken_banner_blocks_warn(self) -> None:
+        findings = self.body_with(BANNER, "' DO WORK", "    'Count once",
+                                  "        Debug.Print 1", "' EXIT PROCEDURE", BANNER)
+        self.assertFinding(findings, 'section label "DO WORK" has no closing banner line')
+        self.assertFinding(findings, 'section label "EXIT PROCEDURE" has no opening banner line')
+
+    def test_group_banner_component_header_and_comments_are_silent(self) -> None:
+        group = ["'", BANNER, "'", "'" + " " * 35 + "SETTINGS", "'", BANNER, "'"]
+        decl = ["    Private mName As String", ""] + group
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        text = module("M_Test", decl + proc[:-2] + ["    'A note", "' column-0 note"] + proc[-2:])
+        self.assertNoFinding(self.run_check(text), "section label")
+        eq = BANNER.replace("-", "=")
+        comp = header(cvs.FIELDS, "' MODULE: M_Test")
+        comp = [eq if ln == BANNER else ln for ln in comp]
+        self.assertNoFinding(self.run_check(module("M_Test", [], component=comp)),
+                             "section label")
+
+    def test_banner_findings_do_not_change_errors(self) -> None:
+        findings = self.body_with(BANNER, "' Do work", BANNER,
+                                  title="' Do Work")
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 

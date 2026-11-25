@@ -3,6 +3,49 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [1.4.0] - 2026-11-25
+
+### Added
+
+- Checker: WARN for a `Sub`, `Function` or `Property` signature without
+  `Public`, `Private` or `Friend` (`Static` alone does not count), for a
+  module-level `Const` whose name is not `UPPER_SNAKE_CASE` (constants inside
+  a procedure are not checked), and for declarations whose `As` or trailing
+  `'comment` is not in the column of the first declaration of their group
+  (#15). A group is a run of consecutive one-line declarations in the module
+  top or in a procedure `DECLARE` section; a blank line, a comment, a
+  statement or a continued line ends it. `Declare`, `Enum` and `Type`
+  members and conditional-compilation lines are not groups. One finding per
+  group and kind. Exit code and `--fix` are unchanged.
+- Checker: WARN for a procedure title banner whose title is not UPPERCASE or
+  not centered (`(78 - len(title)) // 2` leading spaces, as in `SKILL.md`
+  section 2, so no tolerance), and for a section banner whose label is not
+  UPPERCASE, not one space after the apostrophe, or has a banner line on only
+  one side (#16). Section banners are checked in the module top (after the
+  component header) and in procedure bodies. Group banners, the component
+  header, intent comments and header fields are not checked. Exit code and
+  `--fix` are unchanged.
+
+### Changed
+
+- Checker: the `VBA.` qualifier is optional. The WARN for VBA library calls
+  written without `VBA.` (#8) is removed, together with its name list
+  (`VBA_QUALIFIED`) and its tests; neither form is reported, and code that
+  already uses `VBA.` stays valid. `SKILL.md` keeps the qualifier as a
+  recommendation when a project may lose a reference or defines names that
+  collide with the library, and `M_Example.bas` uses the plain form (#20).
+  Exit code and `--fix` are unchanged.
+
+### Documentation
+
+- README: the feature table covers banner titles, visibility and constant
+  names; the layout lists `.github/`, `docs/`, `CHANGELOG.md` and `LICENSE`;
+  the release steps add the changelog and the release-branch flow; links to
+  the changelog and the label guide.
+- `M_Example.bas`: `M_Greeting_GetPrefix` now shows the compact header of a
+  short `Private` procedure (`PURPOSE`, `RETURNS`, `UPDATED`); `SKILL.md`
+  points to it. No checker change.
+
 ## [1.3.0] - 2026-11-21
 
 ### Added

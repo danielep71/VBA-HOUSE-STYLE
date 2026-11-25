@@ -4,7 +4,7 @@
 
 **One skill, one style: exported VBA that reads the same in every repository.**
 
-[![Plugin](https://img.shields.io/badge/plugin-v1.3.0-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
+[![Plugin](https://img.shields.io/badge/plugin-v1.4.0-6f42c1?style=for-the-badge)](.claude-plugin/plugin.json)
 [![VBA](https://img.shields.io/badge/VBA-.bas%20%C2%B7%20.cls%20%C2%B7%20.frm-217346?style=for-the-badge)](skills/vba-house-style/references/M_Example.bas)
 [![Python](https://img.shields.io/badge/python-3%20%C2%B7%20stdlib%20only-3776AB?style=for-the-badge&logo=python&logoColor=white)](skills/vba-house-style/scripts/check_vba_style.py)
 [![EOL](https://img.shields.io/badge/line%20endings-CRLF-555555?style=for-the-badge)](.gitattributes)
@@ -15,7 +15,9 @@
 [📁 Layout](#-layout) ·
 [🔍 Checker](#-the-checker) ·
 [🚀 Release](#-release-a-new-version) ·
-[💻 Local install](#-local-only-install)
+[💻 Local install](#-local-only-install) ·
+[📝 Changelog](CHANGELOG.md) ·
+[🏷️ Issue labels](docs/ISSUE_LABELS.md)
 
 </div>
 
@@ -25,12 +27,12 @@
 
 | | Rule | In short |
 |---|---|---|
-| 📏 | **Banners** | Every banner is exactly 79 characters: `'` plus 78 dashes |
+| 📏 | **Banners** | Every banner is exactly 79 characters: `'` plus 78 dashes; procedure titles UPPERCASE and centered, section labels UPPERCASE |
 | 🧾 | **Nine-field header** | `PURPOSE` · `WHY THIS EXISTS` · `INPUTS` · `RETURNS` · `BEHAVIOR` · `ERROR POLICY` · `DEPENDENCIES` · `NOTES` · `UPDATED`; small `Private` helpers may use a compact `PURPOSE` + `UPDATED` header |
 | 🧱 | **Body sections** | `DECLARE` → `INITIALIZE` → task sections → `EXIT PROCEDURE` → `ERROR HANDLER` |
 | ↘️ | **Two-level indent** | One-line intent comment at 4 spaces, code at 8 |
-| 📐 | **Aligned declarations** | `As` and the trailing `'comment` in fixed columns |
-| 🔤 | **Qualified built-ins** | `VBA.Len`, `VBA.Trim$`, `VBA.CStr`… |
+| 📐 | **Aligned declarations** | `As` and the trailing `'comment` in fixed columns; explicit `Public` / `Private` / `Friend`; module constants in `UPPER_SNAKE_CASE` |
+| 🔤 | **Optional `VBA.`** | `Len` and `VBA.Len` are both accepted; qualify when a reference may go missing or a name collides |
 | ↩️ | **CRLF, no tabs** | No trailing whitespace; the `.frm` designer block is never touched |
 | 🛡️ | **Behavior preserving** | Formatting never renames public members, changes signatures or alters logic |
 
@@ -51,7 +53,7 @@ An excerpt from [`M_Example.bas`](skills/vba-house-style/references/M_Example.ba
 ' VALIDATE INPUTS
 '------------------------------------------------------------------------------
     'Reject a blank name
-        If VBA.Len(NormalizedName) = 0 Then
+        If Len(NormalizedName) = 0 Then
             Err.Raise vbObjectError + EX_ERR_BLANK_NAME, PROC_NAME, _
                 "PersonName cannot be blank"
         End If
@@ -64,6 +66,12 @@ vba-house-style/
 ├── .claude-plugin/
 │   ├── marketplace.json            🛒 lets claude.ai sync the plugin from this repo
 │   └── plugin.json                 📦 name, version, description
+├── .github/
+│   ├── labels.json                 🏷️ issue label catalogue
+│   ├── scripts/                    🔄 label sync and drift scripts
+│   └── workflows/                  ⚙️ CI, label sync, label drift
+├── docs/
+│   └── ISSUE_LABELS.md             📋 how the labels are used
 ├── skills/
 │   └── vba-house-style/
 │       ├── SKILL.md                📘 the rules and the workflow
@@ -73,8 +81,10 @@ vba-house-style/
 │           └── check_vba_style.py  🔍 checker; --fix normalizes whitespace only
 ├── tests/
 │   └── test_check_vba_style.py     🧪 checker tests
-└── tools/
-    └── build_plugin.py             🛠️ builds the uploadable ZIP
+├── tools/
+│   └── build_plugin.py             🛠️ builds the uploadable ZIP
+├── CHANGELOG.md                    📝 what changed in each version
+└── LICENSE                         ⚖️ MIT
 ```
 
 ## 🔍 The checker
@@ -87,15 +97,17 @@ python skills\vba-house-style\scripts\check_vba_style.py --fix src\    # normali
 | Level | Flags |
 |---|---|
 | ❌ **ERROR** | not CRLF · missing final CRLF · `VB_Name` ≠ file name · no `Option Explicit` · tabs · trailing whitespace · banner ≠ 79 chars |
-| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 · `Next` without its counter · `:` between statements · `InStr` / `StrComp` without a compare mode · parameters without `ByVal`/`ByRef` or `As` · function without `As` · `= ""` instead of `vbNullString` · `Len`, `Trim$`, `CStr`… without `VBA.` · `Select Case` without `Case Else` · local variable with a Hungarian prefix (`strName`) or not PascalCase · local variables or error handler without a `DECLARE` section · `DECLARE` not starting with `Const PROC_NAME` or a `PROC_NAME` other than `<Component>.<Procedure>` · first `On Error GoTo` outside `INITIALIZE` · error label not at column 0 · body sections out of order · no `Exit Sub/Function/Property` in `EXIT PROCEDURE` before the error label (one-line and compact `Private` procedures exempt) |
+| ⚠️ **WARN** | line > `--max-line` (default 120; string contents and declaration comments not counted) · missing `MODULE:` / `CLASS:` header · header fields missing or out of order · blank lines between procedures ≠ 1 · `Next` without its counter · `:` between statements · `InStr` / `StrComp` without a compare mode · parameters without `ByVal`/`ByRef` or `As` · function without `As` · `= ""` instead of `vbNullString` · procedure without `Public` / `Private` / `Friend` · module-level constant not `UPPER_SNAKE_CASE` · `As` or trailing `'comment` not aligned within a group of declarations (module top and `DECLARE` sections) · procedure title not UPPERCASE or not centered in the 78 columns · section label not UPPERCASE, not one space after the apostrophe, or without its opening or closing banner line · `Select Case` without `Case Else` · local variable with a Hungarian prefix (`strName`) or not PascalCase · local variables or error handler without a `DECLARE` section · `DECLARE` not starting with `Const PROC_NAME` or a `PROC_NAME` other than `<Component>.<Procedure>` · first `On Error GoTo` outside `INITIALIZE` · error label not at column 0 · body sections out of order · no `Exit Sub/Function/Property` in `EXIT PROCEDURE` before the error label (one-line and compact `Private` procedures exempt) |
 
 `--fix` touches whitespace and line endings only, never code, and skips the
 `.frm` designer block. The exit code is `1` while any error remains.
 
-Tests (standard library only):
+Tests (standard library only); CI runs the same command, plus a style check of
+`M_Example.bas`, which must stay clean:
 
 ```powershell
 python -m unittest discover -s tests
+python skills\vba-house-style\scripts\check_vba_style.py skills\vba-house-style\references
 ```
 
 ## 🚀 Release a new version
@@ -104,10 +116,13 @@ python -m unittest discover -s tests
 2. 🔢 Raise `version` in `.claude-plugin/plugin.json` (for example 1.0.0 to
    1.0.1) and the **plugin** badge at the top of this file. The build stops
    if the two differ.
-3. 🔀 Merge into `main`.
-4. 🔄 On claude.ai, **Manage marketplaces > Check for updates** to pull the
+3. 📝 In `CHANGELOG.md`, move `[Unreleased]` under the new version with its
+   date.
+4. 🔀 Merge the task pull requests into `release/vX.Y.Z`, then integrate that
+   branch into `main`.
+5. 🔄 On claude.ai, **Manage marketplaces > Check for updates** to pull the
    new version now; only a raised version reaches users.
-5. 🆕 Open a new session: a running session keeps the version it started
+6. 🆕 Open a new session: a running session keeps the version it started
    with.
 
 ### ☁️ One-time setup on claude.ai
