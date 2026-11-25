@@ -32,7 +32,9 @@ ones.
    top and `DECLARE` sections), a procedure title that is not UPPERCASE or not
    centered, a section label that is not UPPERCASE, not one space after
    the apostrophe, or missing its opening or closing banner line, and a
-   statement or intent comment out of indentation in a body section. In the
+   statement or intent comment out of indentation in a body section, blank
+   lines out of place around section banners, group banner blocks, the
+   header and `End` (section 6). In the
    headers it warns on field text not at 3 spaces, an `UPDATED` that is not a
    real `YYYY-MM-DD` date, a `Sub` whose `RETURNS` is not `Nothing`, and
    `INPUTS` that do not match the signature (or are not `None at module
@@ -86,6 +88,10 @@ Three banner kinds:
   ' PRIVATE CONSTANTS
   '------------------------------------------------------------------------------
   ```
+
+  One blank line goes above a section banner and none below it: the first
+  declaration, statement, comment or label follows the closing banner line
+  directly.
 
 - **Procedure title banner**: title UPPERCASE, centered in the 78 columns
   after the apostrophe (leading spaces = `(78 - len(title)) // 2`). The title
