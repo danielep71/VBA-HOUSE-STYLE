@@ -133,7 +133,8 @@ No field is ever omitted; write `None` instead.
 lines (comments and blank lines not counted) may use a compact header:
 `PURPOSE` and `UPDATED`, plus any of the other fields that say something
 useful, still in the order above. `Public`, `Friend` and event procedures
-always use all nine.
+always use all nine. `M_Greeting_GetPrefix` in `references/M_Example.bas` is a
+compact header: `PURPOSE`, `RETURNS`, `UPDATED`.
 
 **Extra sections.** A module, class or procedure header may add its own
 UPPERCASE sections (for example `PUBLIC SURFACE`) after the standard fields
