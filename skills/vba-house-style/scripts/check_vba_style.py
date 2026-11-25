@@ -696,6 +696,9 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         while h < end and lines[h].startswith("'"):
             header.append(lines[h])
             h += 1
+        # A documentation header holds a banner line; a plain comment right
+        # after the signature is not one.
+        documented_header = any(BANNER_RE.match(ln) for ln in header)
         for line_no, msg in title_problems(lines, header_at, h):
             add("WARN", line_no, f"{name}: {msg}")
         labels = [ln[2:].strip() for ln in header if LABEL_RE.fullmatch(ln)]
@@ -720,7 +723,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             banners_from = first
         for line_no, msg in banner_problems(lines, banners_from, end):
             add("WARN", line_no, f"{name}: {msg}")
-        if header:
+        if documented_header:
             for line_no, msg in section_spacing_problems(lines, banners_from, end):
                 add("WARN", line_no, f"{name}: {msg}")
             # Blank lines around the header (SKILL.md section 6): one after a
@@ -748,7 +751,7 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                     for line_no, msg in alignment_problems(lines, at, stop):
                         add("WARN", line_no, f"{name}: {msg}")
         procs.append((i, end))
-        if header:
+        if documented_header:
             documented.add(i)
         i = end + 1
     # Group banner blocks (SKILL.md section 6): one blank line after the
