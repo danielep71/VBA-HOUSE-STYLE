@@ -30,8 +30,9 @@ ones.
    module-level constant that is not `UPPER_SNAKE_CASE`, and `As` or a
    trailing `'comment` out of column within a group of declarations (module
    top and `DECLARE` sections), a procedure title that is not UPPERCASE or not
-   centered, and a section label that is not UPPERCASE, not one space after
-   the apostrophe, or missing its opening or closing banner line. It also
+   centered, a section label that is not UPPERCASE, not one space after
+   the apostrophe, or missing its opening or closing banner line, and a
+   statement or intent comment out of indentation in a body section. It also
    checks the body sections of
    section 6: `DECLARE` starting with the right `PROC_NAME`, `On Error GoTo`
    in `INITIALIZE`, the error label at column 0, the section order, and the
@@ -243,6 +244,29 @@ at 8 spaces. Nested blocks add 4 spaces per level from there.
   (a multi-line intent comment continues at 4 spaces).
 - One intent comment can cover several closely related statements.
 - Labels (`ErrorHandler:`, `CleanExit:`, `SafeExit:`) are at column 0.
+- `Else`, `ElseIf` and `End If` sit at the column of their `If`; `Next`,
+  `Loop`, `Wend`, `End With` and `End Select` at the column of their opening
+  statement. In a `Select Case`, each `Case` is indented 4 from
+  `Select Case` and its statements 4 more:
+
+```
+    'Pick the label for the style
+        Select Case Style
+            Case EX_GreetingFormal
+                Label = "Formal"
+            Case Else
+                Label = "Plain"
+        End Select
+```
+
+- The checker reports, in every body section except `DECLARE`, a statement
+  that is not at 8 spaces plus 4 per open block and an intent comment (text
+  right after the apostrophe) outside any block that is not at 4 spaces. One
+  finding per section and kind. Continuation lines, labels, `#If` lines,
+  comments inside a block and commented-out code (`'` followed by spaces)
+  are not checked; a procedure with a line it cannot classify (`:` between
+  statements, a line number), with unbalanced blocks, or with a block opened
+  or closed inside `#If` ... `#End If` is not reported.
 
 ### Error handling pattern
 

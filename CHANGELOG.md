@@ -3,6 +3,28 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Added
+
+- Checker: WARN for a statement that is not at 8 spaces plus 4 per open
+  block, and for an intent comment (text right after the apostrophe) outside
+  any block that is not at 4 spaces, in every procedure body section except
+  `DECLARE` (#25). Blocks are `If` / `ElseIf` / `Else` / `End If`, `For` /
+  `Next`, `Do` / `Loop`, `While` / `Wend`, `With` / `End With` and
+  `Select Case` / `Case` / `End Select`; a one-line `If` is not a block.
+  Continuation lines, labels, `#If` lines, comments inside a block and
+  commented-out code are not checked. A procedure with `:` between
+  statements, a line number, unbalanced blocks or a block opened or closed
+  inside `#If` ... `#End If` is not reported. One finding per section and
+  kind. Exit code and `--fix` are unchanged.
+
+### Documentation
+
+- `SKILL.md`: `Case` is indented 4 from `Select Case` and its statements 4
+  more; `Else`, `ElseIf` and the closing statements sit at the column of
+  their opening statement.
+
 ## [1.4.0] - 2026-11-25
 
 ### Added

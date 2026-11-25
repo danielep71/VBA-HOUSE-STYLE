@@ -702,6 +702,135 @@ class CheckerTest(unittest.TestCase):
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
+    # Statement indentation (#25).
+    NESTED = ["    'Walk the items",
+              "        For Index = 1 To 3",
+              "            If Index = 1 Then",
+              "                Debug.Print 1",
+              "            ElseIf Index = 2 Then",
+              "                Debug.Print 2",
+              "            Else",
+              "                Debug.Print 3",
+              "            End If",
+              "            Select Case Index",
+              "                Case 1",
+              "                    Debug.Print 1",
+              "                Case Else",
+              "                    Debug.Print 2",
+              "            End Select",
+              "            If Index = 3 Then Exit For",
+              "            With Application",
+              "                .StatusBar = False",
+              "            End With",
+              "            Do While Index < 0",
+              "                Index = Index + 1",
+              "            Loop",
+              "        Next Index"]
+
+    def test_nested_blocks_at_their_levels_are_silent(self) -> None:
+        self.assertEqual(self.sections(DECLARE, ("DO WORK", self.NESTED)), [])
+
+    def test_statement_out_of_indentation_warns(self) -> None:
+        for at, line in ((0, "      Debug.Print 0"), (3, "            Debug.Print 1"),
+                         (11, "                Debug.Print 1")):
+            with self.subTest(line=line):
+                code = self.NESTED[:at + 1] + [line] + self.NESTED[at + 1:]
+                findings = self.sections(DECLARE, ("DO WORK", code))
+                got = len(line) - len(line.lstrip())
+                self.assertEqual(sum("indented" in f for f in findings), 1, findings)
+                self.assertFinding(findings, f"WARN M_Test_Run: statement indented {got} "
+                                             "spaces, expected")
+
+    def test_closing_and_middle_lines_follow_their_opening(self) -> None:
+        for old, new in (("            Else", "                Else"),
+                         ("            End If", "                End If"),
+                         ("                Case Else", "            Case Else"),
+                         ("            End Select", "                End Select"),
+                         ("        Next Index", "            Next Index")):
+            with self.subTest(line=new):
+                code = [new if ln == old else ln for ln in self.NESTED]
+                findings = self.sections(DECLARE, ("DO WORK", code))
+                self.assertFinding(findings, "statement indented")
+
+    def test_one_finding_per_section_and_kind(self) -> None:
+        code = ["    'Count", "    Debug.Print 1", "    Debug.Print 2",
+                "  'Off", "    Debug.Print 3"]
+        findings = self.sections(DECLARE, ("DO WORK", code), ("RETURN VALUE", code))
+        self.assertEqual(sum("statement indented 4 spaces, expected 8; 2 more in DO WORK" in f
+                             for f in findings), 1, findings)
+        self.assertEqual(sum("intent comment indented 2 spaces, expected 4" in f
+                             for f in findings), 2, findings)
+        self.assertFinding(findings, "2 more in RETURN VALUE")
+
+    def test_intent_comment_out_of_indentation_warns(self) -> None:
+        for lead in (0, 2, 8):
+            with self.subTest(lead=lead):
+                code = [" " * lead + "'Count once", "        Debug.Print 1"]
+                findings = self.sections(("DO WORK", code))
+                self.assertFinding(findings, f"intent comment indented {lead} spaces, expected 4")
+
+    def test_comments_inside_blocks_and_commented_out_code_are_silent(self) -> None:
+        code = ["    'Loop", "        For Index = 1 To 3",
+                "                'A note at any column inside a block",
+                "            Debug.Print Index", "        Next Index",
+                "'        Debug.Print Index", "    'A multi-line intent comment",
+                "    'continues at 4 spaces"]
+        self.assertEqual(self.sections(DECLARE, ("DO WORK", code)), [])
+
+    def test_one_line_if_continuations_labels_and_directives_are_silent(self) -> None:
+        code = ["    'Stop early", "        If Index = 0 Then Exit Sub",
+                "    'Report the totals",
+                "        Debug.Print Index, _",
+                "            Index + 1",
+                "    'Branch on a long condition",
+                "        If Index > 1 And _",
+                "                Index < 9 Then",
+                "            Debug.Print Index",
+                "        End If",
+                "#If VBA7 Then",
+                "        Debug.Print 1",
+                "#End If"]
+        self.assertEqual(self.sections(DECLARE, ("DO WORK", code)), [])
+        self.assertEqual(self.sections(DECLARE, INIT, TASK, EXIT, HANDLER), [])
+
+    def test_declare_and_lines_before_the_first_section_are_not_checked(self) -> None:
+        declare = ("DECLARE", [DECLARE[1][0], "", "  Dim Count As Long"])
+        self.assertNoFinding(self.sections(declare, TASK), "indented")
+        findings = self.statements("Debug.Print 1", "  Debug.Print 2")
+        self.assertNoFinding(findings, "indented")
+
+    def test_unclassifiable_or_unbalanced_procedures_are_silent(self) -> None:
+        for code in (["      A = 1: B = 2"],
+                     ["10      Debug.Print 1"],
+                     ["        If Index = 1 Then", "      Debug.Print 1"],
+                     ["        Next Index", "      Debug.Print 1"],
+                     ["        Case 1", "      Debug.Print 1"]):
+            with self.subTest(code=code):
+                findings = self.sections(DECLARE, ("DO WORK", code))
+                self.assertNoFinding(findings, "indented")
+
+    def test_blocks_chosen_by_conditional_compilation_are_silent(self) -> None:
+        code = ["    'Pick the branch", "#If VBA7 Then", "        If Ready Then", "#Else",
+                "        If Done Then", "#End If", "            Debug.Print 1",
+                "#If VBA7 Then", "        End If", "#Else", "        End If", "#End If",
+                "    'Off", "      Debug.Print 2"]
+        self.assertNoFinding(self.sections(DECLARE, ("DO WORK", code)), "indented")
+        plain = ["    'Pick the branch", "#If VBA7 Then", "        Debug.Print 1", "#Else",
+                 "      Debug.Print 2", "#End If"]
+        self.assertFinding(self.sections(DECLARE, ("DO WORK", plain)),
+                           "statement indented 6 spaces, expected 8")
+
+    def test_next_closing_two_loops(self) -> None:
+        code = ["    'Walk the grid", "        For Row = 1 To 2", "            For Col = 1 To 2",
+                "                Debug.Print Row, Col", "        Next Col, Row",
+                "    'Done", "        Debug.Print 0"]
+        self.assertEqual(self.sections(DECLARE, ("DO WORK", code)), [])
+
+    def test_indentation_findings_do_not_change_errors(self) -> None:
+        findings = self.sections(DECLARE, ("DO WORK", ["  'Off", "    Debug.Print 1"]))
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
     # Tokenizer.
     def kinds(self, line: str) -> list[tuple[str, str]]:
         return cvs.tokenize(line)
