@@ -352,6 +352,60 @@ def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, in
     return out
 
 
+def blanks_above(lines: list[str], n: int) -> tuple[int, int]:
+    """(blank lines right above line n, index of the line above them; -1 at
+    the top of the file)."""
+    j = n - 1
+    while j >= 0 and lines[j].strip() == "":
+        j -= 1
+    return n - 1 - j, j
+
+
+def section_spacing_problems(lines: list[str], first: int,
+                             last: int) -> list[tuple[int, str]]:
+    """Section banners in lines[first:last] without exactly one blank line
+    above the opening banner line, or with a blank line right below the
+    closing one (SKILL.md section 2). One finding per kind, with the count
+    of the others."""
+    bad: dict[str, list[tuple[int, str]]] = {}
+    for title, n in body_sections(lines, first, last):
+        blanks, _ = blanks_above(lines, n - 1)
+        if blanks != 1:
+            bad.setdefault("before", []).append(
+                (n, f"{blanks} blank lines before section banner {title}, expected 1"))
+        if n + 2 < last and lines[n + 2].strip() == "":
+            bad.setdefault("after", []).append(
+                (n + 3, f"blank line after section banner {title}, expected none"))
+    out = []
+    for found in bad.values():
+        line_no, msg = found[0]
+        more = f"; {len(found) - 1} more" if len(found) > 1 else ""
+        out.append((line_no, msg + more))
+    return sorted(out)
+
+
+def group_banner_blocks(lines: list[str], first: int, last: int,
+                        procs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """(first, last) index of each group banner block in lines[first:last]
+    outside procedures: a run of comment lines at column 0 that starts with
+    a lone "'" and holds at least two banner lines."""
+    inside = set()
+    for a, b in procs:
+        inside.update(range(a, b + 1))
+    out, n = [], first
+    while n < last:
+        if n in inside or lines[n].rstrip() != "'":
+            n += 1
+            continue
+        m = n
+        while m + 1 < last and m + 1 not in inside and lines[m + 1].startswith("'"):
+            m += 1
+        if sum(1 for k in range(n, m + 1) if BANNER_RE.match(lines[k])) >= 2:
+            out.append((n, m))
+        n = m + 1
+    return out
+
+
 def body_problems(lines: list[str], stmts: list[tuple[int, str]], first: int,
                   last: int, proc_name: str, kind: str) -> list[tuple[int, str]]:
     """Layout problems of one procedure body (SKILL.md section 6), as
@@ -609,7 +663,10 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
     if top is not None:
         for line_no, msg in banner_problems(lines, header_end + 1, first_proc):
             add("WARN", line_no, msg)
+        for line_no, msg in section_spacing_problems(lines, header_end + 1, first_proc):
+            add("WARN", line_no, msg)
     statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
+    procs: list[tuple[int, int]] = []
     i = start
     while i < len(lines):
         m = PROC_RE.match(lines[i])
@@ -662,6 +719,19 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             banners_from = first
         for line_no, msg in banner_problems(lines, banners_from, end):
             add("WARN", line_no, f"{name}: {msg}")
+        for line_no, msg in section_spacing_problems(lines, banners_from, end):
+            add("WARN", line_no, f"{name}: {msg}")
+        if header:
+            # Blank lines around the header (SKILL.md section 6): one after a
+            # one-line signature, none after a multi-line one, one before End.
+            want = 0 if k > i else 1
+            if header_at - k - 1 != want:
+                add("WARN", sig_line, f"{name}: {header_at - k - 1} blank lines after "
+                                      f"the signature, expected {want}")
+            blanks, above = blanks_above(lines, end)
+            if above >= h and blanks != 1:
+                add("WARN", end + 1, f"{name}: {blanks} blank lines before "
+                                     f"{lines[end].strip()}, expected 1")
         for line_no, msg in indent_problems(lines, first, end):
             add("WARN", line_no, f"{name}: {msg}")
         if not compact and body > TRIVIAL_MAX:
@@ -676,7 +746,27 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                     stop = sections[pos + 1][1] if pos + 1 < len(sections) else end
                     for line_no, msg in alignment_problems(lines, at, stop):
                         add("WARN", line_no, f"{name}: {msg}")
+        procs.append((i, end))
         i = end + 1
+    # Group banner blocks (SKILL.md section 6): one blank line after the
+    # previous End, two after the declarations, one before the signature.
+    groups_from = header_end + 1 if top is not None else start
+    for first_line, last_line in group_banner_blocks(lines, groups_from, len(lines), procs):
+        blanks, above = blanks_above(lines, first_line)
+        if above >= 0 and END_RE.match(lines[above]):
+            if blanks != 1:
+                add("WARN", first_line + 1, f"group banner: {blanks} blank lines after "
+                                            "previous End, expected 1")
+        elif top is not None and above > header_end and blanks != 2:
+            add("WARN", first_line + 1, f"group banner: {blanks} blank lines after "
+                                        "the declarations, expected 2")
+        below = last_line + 1
+        while below < len(lines) and lines[below].strip() == "":
+            below += 1
+        sig = PROC_RE.match(lines[below]) if below < len(lines) else None
+        if sig and below - last_line - 1 != 1:
+            add("WARN", below + 1, f"{sig.group(2)}: {below - last_line - 1} blank lines "
+                                   "after the group banner, expected 1")
     out += statement_findings(lines, start)
     return out
 

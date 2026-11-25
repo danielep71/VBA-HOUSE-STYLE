@@ -345,7 +345,9 @@ class CheckerTest(unittest.TestCase):
                                  blank=False)
         self.assertFinding(findings, "no DECLARE section")
         findings = self.sections(DECLARE, TASK, blank=False)
-        self.assertEqual(findings, [])
+        # The missing blank line itself is reported since #30; nothing else is.
+        self.assertEqual([f for f in findings if "blank line" not in f], [])
+        self.assertFinding(findings, "0 blank lines before section banner DECLARE, expected 1")
 
     def test_local_variables_without_declare_warn(self) -> None:
         findings = self.sections(("DO WORK", ["    Dim Count As Long", "        Count = 1"]))
@@ -885,7 +887,8 @@ class CheckerTest(unittest.TestCase):
                      component: list[str] | None = None, name: str = "M_Test",
                      suffix: str = ".bas") -> list[str]:
         title = "'" + " " * 35 + "DO WORK"
-        proc = [signature, ""] + header(fields or cvs.FIELDS, title, text) + [
+        gap = [] if " _\r\n" in signature else [""]
+        proc = [signature] + gap + header(fields or cvs.FIELDS, title, text) + [
             "", "        Debug.Print 1", "", end]
         return self.run_check(module(name, proc, component), name, suffix)
 
@@ -1004,6 +1007,125 @@ class CheckerTest(unittest.TestCase):
     def test_header_value_findings_do_not_change_errors(self) -> None:
         text = {"UPDATED": "soon", "RETURNS": "A value", "INPUTS": "Count"}
         findings = self.header_check(text=text)
+        self.assertTrue(findings)
+        self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
+
+    # Blank lines around headers and banners (#30).
+    GROUP = ["'", BANNER, "'", "'" + " " * 35 + "GREETINGS", "'", BANNER, "'"]
+    STATE = [BANNER, "' PRIVATE STATE", BANNER,
+             "    Private mCount                      As Long         'Calls so far"]
+
+    def layout(self, declarations: list[str], gap: int, group: bool = True,
+               after_group: int = 1, second_gap: int = 1) -> list[str]:
+        """A module: declarations, gap blank lines, an optional group banner
+        block, two procedures (second after second_gap blank lines)."""
+        first = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        second = procedure("Public Sub M_Test_B()", cvs.FIELDS)
+        body = declarations + [""] * gap
+        if group:
+            body += self.GROUP + [""] * after_group
+        body += first + [""] * second_gap + second
+        return self.run_check(module("M_Test", body))
+
+    def test_layout_that_follows_the_skill_is_silent(self) -> None:
+        self.assertEqual(self.layout(self.STATE, 2), [])
+        self.assertEqual(self.sections(DECLARE, INIT, TASK, EXIT, HANDLER), [])
+
+    def test_group_banner_after_declarations_needs_two_blank_lines(self) -> None:
+        for gap in (1, 3):
+            with self.subTest(gap=gap):
+                findings = self.layout(self.STATE, gap)
+                self.assertFinding(findings, f"group banner: {gap} blank lines after "
+                                             "the declarations, expected 2")
+
+    def test_group_banner_right_after_the_component_header_is_silent(self) -> None:
+        self.assertNoFinding(self.layout([], 0), "group banner")
+
+    def test_group_banner_without_a_component_header_is_not_counted(self) -> None:
+        lines = ['Attribute VB_Name = "M_Test"', "", "Option Explicit", ""] + self.GROUP
+        lines += [""] + procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        findings = self.run_check("\r\n".join(lines) + "\r\n")
+        self.assertFinding(findings, "no ' MODULE: / ' CLASS: component header")
+        self.assertNoFinding(findings, "after the declarations")
+
+    def test_group_banner_and_signature_need_one_blank_line(self) -> None:
+        for gap in (0, 2):
+            with self.subTest(gap=gap):
+                findings = self.layout(self.STATE, 2, after_group=gap)
+                self.assertFinding(findings, f"M_Test_A: {gap} blank lines after the "
+                                             "group banner, expected 1")
+
+    def test_group_banner_after_end_needs_one_blank_line(self) -> None:
+        first = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        second = procedure("Public Sub M_Test_B()", cvs.FIELDS)
+        for gap, ok in ((1, True), (2, False), (0, False)):
+            with self.subTest(gap=gap):
+                body = first + [""] * gap + self.GROUP + [""] + second
+                findings = self.run_check(module("M_Test", body))
+                text = f"group banner: {gap} blank lines after previous End, expected 1"
+                (self.assertNoFinding if ok else self.assertFinding)(findings, text)
+
+    def test_two_consecutive_group_banner_blocks_are_one_block(self) -> None:
+        findings = self.run_check(module("M_Test", self.GROUP + self.GROUP + [""] +
+                                         procedure("Public Sub M_Test_A()", cvs.FIELDS)))
+        self.assertEqual(findings, [])
+
+    def test_signature_spacing_warns(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        findings = self.run_check(module("M_Test", proc[:1] + proc[2:]))
+        self.assertFinding(findings, "M_Test_A: 0 blank lines after the signature, expected 1")
+        findings = self.run_check(module("M_Test", proc[:1] + ["", ""] + proc[2:]))
+        self.assertFinding(findings, "M_Test_A: 2 blank lines after the signature, expected 1")
+
+    def test_multi_line_signature_takes_no_blank_line(self) -> None:
+        signature = "Public Sub M_Test_A( _\r\n    ByVal Count As Long)"
+        proc = procedure(signature, cvs.FIELDS)
+        findings = self.run_check(module("M_Test", proc))
+        self.assertFinding(findings, "M_Test_A: 1 blank lines after the signature, expected 0")
+        findings = self.run_check(module("M_Test", proc[:1] + proc[2:]))
+        self.assertNoFinding(findings, "after the signature")
+
+    def test_blank_lines_before_end_warn(self) -> None:
+        proc = procedure("Public Sub M_Test_A()", cvs.FIELDS)
+        for gap in (0, 2):
+            with self.subTest(gap=gap):
+                findings = self.run_check(module("M_Test", proc[:-2] + [""] * gap + ["End Sub"]))
+                self.assertFinding(findings, f"M_Test_A: {gap} blank lines before End Sub, "
+                                             "expected 1")
+
+    def test_compact_header_and_last_procedure_follow_the_same_rules(self) -> None:
+        proc = procedure("Private Sub M_Test_A()", ["PURPOSE", "UPDATED"])
+        self.assertEqual(self.run_check(module("M_Test", proc)), [])
+        findings = self.run_check(module("M_Test", proc[:-2] + ["End Sub"]))
+        self.assertFinding(findings, "M_Test_A: 0 blank lines before End Sub, expected 1")
+
+    def test_section_banner_spacing_warns_once_per_kind(self) -> None:
+        proc = ["Public Sub M_Test_Run()", ""] + header(cvs.FIELDS, "'" + " " * 35 + "DO WORK")
+        proc += [""]
+        for name, code in (DECLARE, INIT, TASK):
+            proc += [BANNER, f"' {name}", BANNER, ""] + code
+        findings = self.run_check(module("M_Test", proc + ["", "End Sub"]))
+        self.assertFinding(findings, "M_Test_Run: blank line after section banner DECLARE, "
+                                     "expected none; 2 more")
+        self.assertFinding(findings, "M_Test_Run: 0 blank lines before section banner "
+                                     "INITIALIZE, expected 1; 1 more")
+
+    def test_module_top_section_banner_spacing_warns(self) -> None:
+        state = self.STATE[:3] + [""] + self.STATE[3:]
+        findings = self.layout([""] + state, 2)
+        self.assertFinding(findings, "2 blank lines before section banner PRIVATE STATE, "
+                                     "expected 1")
+        self.assertFinding(findings, "blank line after section banner PRIVATE STATE, "
+                                     "expected none")
+
+    def test_blank_lines_between_logical_groups_are_silent(self) -> None:
+        task = ("DO WORK", ["    'Count once", "        Debug.Print 1", "",
+                            "    'Count twice", "        Debug.Print 2"])
+        findings = self.sections(DECLARE, INIT, task, EXIT, HANDLER)
+        self.assertNoFinding(findings, "blank line")
+
+    def test_spacing_findings_do_not_change_errors(self) -> None:
+        findings = self.layout(self.STATE, 1, after_group=0, second_gap=1)
         self.assertTrue(findings)
         self.assertFalse(any(f.startswith("ERROR") for f in findings), findings)
 
