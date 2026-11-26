@@ -1125,6 +1125,12 @@ class CheckerTest(unittest.TestCase):
         self.assertFinding(findings, "M_Test_A: header missing")
         self.assertNoFinding(findings, "blank line")
 
+    def test_leading_comment_is_not_a_header(self) -> None:
+        proc = ["Private Sub M_Test_A()", "'Do some work", "        Debug.Print 1", "End Sub"]
+        findings = self.run_check(module("M_Test", self.GROUP + proc))
+        self.assertFinding(findings, "M_Test_A: header missing")
+        self.assertNoFinding(findings, "blank line")
+
     def test_group_banner_before_a_procedure_without_a_header_is_not_checked(self) -> None:
         proc = ["Private Sub M_Test_A()", "        Debug.Print 1", "End Sub"]
         findings = self.run_check(module("M_Test", self.GROUP + proc))
