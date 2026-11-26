@@ -3,6 +3,35 @@
 All notable changes to the `vba-house-style` plugin. Dates are in
 Europe/Rome time. Versions follow `.claude-plugin/plugin.json`.
 
+## [1.6.0] - 2026-11-25
+
+### Added
+
+- Checker: WARN for header field values (#29): field text whose first line
+  is not at 3 spaces, an `UPDATED` that is not a real `YYYY-MM-DD` date, a
+  `Sub` whose `RETURNS` does not start with `Nothing`, procedure `INPUTS`
+  that miss a parameter of the signature, list a name the signature does not
+  declare or say `None` when there are parameters, and a component `INPUTS`
+  that is not `None at module level` (`None at class level` in a class).
+  `INPUTS` names are the lines at exactly 3 spaces holding one identifier;
+  when another line sits at 3 spaces the names are not compared. Only the
+  fields present are checked, so compact headers stay valid. Exit code and
+  `--fix` are unchanged.
+- Checker: WARN for blank lines out of place around headers and banners
+  (#30): not exactly one blank line above a section banner or a blank line
+  right below it (module top and procedure bodies), not exactly one blank
+  line after a one-line signature or any after a multi-line one, not
+  exactly one blank line before `End Sub` / `Function` / `Property`, and a
+  group banner block without one blank line after the previous `End`, two
+  after the declarations or one before the signature below it. Procedures
+  with no header are not checked; blank lines inside a section are free.
+  One finding per procedure and kind for section banners. Exit code and
+  `--fix` are unchanged.
+
+### Documentation
+
+- `SKILL.md`: one blank line above a section banner and none below it.
+
 ## [1.5.0] - 2026-11-25
 
 ### Added

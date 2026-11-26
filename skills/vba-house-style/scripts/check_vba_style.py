@@ -16,6 +16,7 @@ of the export is preserved. Standard library only.
 from __future__ import annotations
 
 import argparse
+import datetime
 import re
 import sys
 from pathlib import Path
@@ -29,6 +30,9 @@ PROC_RE = re.compile(
 END_RE = re.compile(r"^End\s+(Sub|Function|Property)\b", re.I)
 BANNER_RE = re.compile(r"^'[-=]{5,}\s*$")
 LABEL_RE = re.compile(r"' [A-Z][A-Z /]+")
+# Header field text starts three spaces after the apostrophe (SKILL.md
+# section 4); deeper lines continue it.
+FIELD_TEXT_RE = re.compile(r"'   \S")
 DECL_RE = re.compile(
     r"^\s*(?:(?:Public|Private|Global|Friend|Dim|Static)\s+)?(?:Const\s+)?"
     r"(?:WithEvents\s+)?\w+(?:\([^)]*\))?\s+As\s+", re.I)
@@ -225,6 +229,114 @@ def field_problems(labels: list[str], required: list[str]) -> list[str]:
     return problems
 
 
+FieldText = dict[str, tuple[int, list[tuple[int, str]]]]
+
+
+def header_fields(lines: list[str], first: int, last: int) -> FieldText:
+    """Standard fields of the header in lines[first:last]: label -> (label
+    line index, [(line index, text line)]). Text lines are the comment lines
+    after the label up to the next label or banner; lone "'" lines are left
+    out."""
+    fields: FieldText = {}
+    current: list[tuple[int, str]] | None = None
+    for n in range(first, last):
+        line = lines[n]
+        if BANNER_RE.match(line):
+            current = None
+        elif LABEL_RE.fullmatch(line):
+            label = line[2:].strip()
+            current = [] if label in FIELDS and label not in fields else None
+            if current is not None:
+                fields[label] = (n, current)
+        elif current is not None and line.startswith("'") and line.strip() != "'":
+            current.append((n, line))
+    return fields
+
+
+def param_names(code: str, m: re.Match[str]) -> list[str] | None:
+    """Parameter names of a signature, or None when the list cannot be read."""
+    open_at = code.find("(", m.end())
+    if open_at < 0:
+        return []
+    parsed = call_args(code, open_at)
+    if parsed is None:
+        return None
+    names = []
+    for param in parsed[0]:
+        if not param:
+            continue
+        param = re.sub(r"^(?:(?:Optional|ByVal|ByRef|ParamArray)\s+)*", "", param, flags=re.I)
+        name = re.match(r"[A-Za-z]\w*", param)
+        if name is None:
+            return None
+        names.append(name.group(0))
+    return names
+
+
+def field_value_problems(lines: list[str], first: int, last: int,
+                         params: list[str] | None, kind: str,
+                         component: str | None = None) -> list[tuple[int, str]]:
+    """Header field values (SKILL.md section 4): field text at 3 spaces, a
+    valid UPDATED date, a Sub that RETURNS Nothing, INPUTS that match the
+    signature (procedures) or say None at module / class level (components).
+    params is None when the signature could not be read; kind is the
+    procedure kind in lower case. Fields that are absent are not checked."""
+    out: list[tuple[int, str]] = []
+    fields = header_fields(lines, first, last)
+    for label, (at, text) in fields.items():
+        if text and not FIELD_TEXT_RE.match(text[0][1]):
+            out.append((text[0][0] + 1, f"{label} text not at 3 spaces"))
+    if "UPDATED" in fields:
+        at, text = fields["UPDATED"]
+        value = text[0][1][1:].strip() if text else ""
+        if not valid_date(value):
+            out.append(((text[0][0] if text else at) + 1,
+                        f"UPDATED {value or '(empty)'} is not a YYYY-MM-DD date"))
+    if kind == "sub" and fields.get("RETURNS", (0, []))[1]:
+        at, text = fields["RETURNS"]
+        if not re.match(r"Nothing\b", text[0][1][1:].strip()):
+            out.append((text[0][0] + 1, "RETURNS of a Sub is not Nothing"))
+    if "INPUTS" not in fields or not fields["INPUTS"][1]:
+        return out
+    at, text = fields["INPUTS"]
+    first_text = text[0][1][1:].strip()
+    if component is not None:
+        want = f"None at {component} level"
+        if first_text.rstrip(".") != want:
+            out.append((text[0][0] + 1, f"component INPUTS is not '{want}'"))
+        return out
+    if params is None:
+        return out
+    if re.match(r"None\b", first_text):
+        if params:
+            out.append((text[0][0] + 1, f"INPUTS is None but the signature "
+                        f"declares {', '.join(params)}"))
+        return out
+    named = [line for _, line in text if FIELD_TEXT_RE.match(line)]
+    if not all(re.fullmatch(r"'   [A-Za-z]\w*", line) for line in named):
+        return out
+    listed = [line[4:] for line in named]
+    lower = {p.lower() for p in params}
+    missing = [p for p in params if p.lower() not in {n.lower() for n in listed}]
+    extra = [n for n in listed if n.lower() not in lower]
+    if missing:
+        out.append((at + 1, f"INPUTS does not list {', '.join(missing)}"))
+    if extra:
+        out.append((at + 1, f"INPUTS lists {', '.join(extra)}, not in the signature"))
+    return out
+
+
+def valid_date(value: str) -> bool:
+    """True for a real calendar date written YYYY-MM-DD."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, int]]:
     """(title, index of the title line) of each section banner in
     lines[first:last]: an UPPERCASE title after one space, between two banner
@@ -237,6 +349,60 @@ def body_sections(lines: list[str], first: int, last: int) -> list[tuple[str, in
                 and title == title.upper() and re.search("[A-Z]", title) \
                 and BANNER_RE.match(lines[n - 1]) and BANNER_RE.match(lines[n + 1]):
             out.append((title, n))
+    return out
+
+
+def blanks_above(lines: list[str], n: int) -> tuple[int, int]:
+    """(blank lines right above line n, index of the line above them; -1 at
+    the top of the file)."""
+    j = n - 1
+    while j >= 0 and lines[j].strip() == "":
+        j -= 1
+    return n - 1 - j, j
+
+
+def section_spacing_problems(lines: list[str], first: int,
+                             last: int) -> list[tuple[int, str]]:
+    """Section banners in lines[first:last] without exactly one blank line
+    above the opening banner line, or with a blank line right below the
+    closing one (SKILL.md section 2). One finding per kind, with the count
+    of the others."""
+    bad: dict[str, list[tuple[int, str]]] = {}
+    for title, n in body_sections(lines, first, last):
+        blanks, _ = blanks_above(lines, n - 1)
+        if blanks != 1:
+            bad.setdefault("before", []).append(
+                (n, f"{blanks} blank lines before section banner {title}, expected 1"))
+        if n + 2 < last and lines[n + 2].strip() == "":
+            bad.setdefault("after", []).append(
+                (n + 3, f"blank line after section banner {title}, expected none"))
+    out = []
+    for found in bad.values():
+        line_no, msg = found[0]
+        more = f"; {len(found) - 1} more" if len(found) > 1 else ""
+        out.append((line_no, msg + more))
+    return sorted(out)
+
+
+def group_banner_blocks(lines: list[str], first: int, last: int,
+                        procs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """(first, last) index of each group banner block in lines[first:last]
+    outside procedures: a run of comment lines at column 0 that starts with
+    a lone "'" and holds at least two banner lines."""
+    inside = set()
+    for a, b in procs:
+        inside.update(range(a, b + 1))
+    out, n = [], first
+    while n < last:
+        if n in inside or lines[n].rstrip() != "'":
+            n += 1
+            continue
+        m = n
+        while m + 1 < last and m + 1 not in inside and lines[m + 1].startswith("'"):
+            m += 1
+        if sum(1 for k in range(n, m + 1) if BANNER_RE.match(lines[k])) >= 2:
+            out.append((n, m))
+        n = m + 1
     return out
 
 
@@ -481,6 +647,10 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         labels = [ln[2:].strip() for ln in lines[top:n] if LABEL_RE.fullmatch(ln)]
         for msg in field_problems(labels, FIELDS):
             add("WARN", top + 1, f"component {msg}")
+        level = "class" if lines[top].startswith("' CLASS:") else "module"
+        for line_no, msg in field_value_problems(lines, top, header_end, [], "",
+                                                 component=level):
+            add("WARN", line_no, msg if msg.startswith("component") else f"component {msg}")
 
     # Procedures: header fields in order, spacing between procedures, body
     # sections.
@@ -493,7 +663,11 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
     if top is not None:
         for line_no, msg in banner_problems(lines, header_end + 1, first_proc):
             add("WARN", line_no, msg)
+        for line_no, msg in section_spacing_problems(lines, header_end + 1, first_proc):
+            add("WARN", line_no, msg)
     statements = {n - 1: code for n, code in logical_lines(lines, start) if code.strip()}
+    procs: list[tuple[int, int]] = []
+    documented: set[int] = set()       # signature lines of procedures with a header
     i = start
     while i < len(lines):
         m = PROC_RE.match(lines[i])
@@ -522,6 +696,9 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         while h < end and lines[h].startswith("'"):
             header.append(lines[h])
             h += 1
+        # A documentation header holds a banner line; a plain comment right
+        # after the signature is not one.
+        documented_header = any(BANNER_RE.match(ln) for ln in header)
         for line_no, msg in title_problems(lines, header_at, h):
             add("WARN", line_no, f"{name}: {msg}")
         labels = [ln[2:].strip() for ln in header if LABEL_RE.fullmatch(ln)]
@@ -529,6 +706,12 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
         compact = lines[i].lstrip().lower().startswith("private ") and body <= COMPACT_MAX
         for msg in field_problems(labels, COMPACT_FIELDS if compact else FIELDS):
             add("WARN", sig_line, f"{name}: {msg}")
+        sig_code = statements.get(i, "")
+        sig_m = PROC_RE.match(sig_code)
+        params = param_names(sig_code, sig_m) if sig_m else None
+        for line_no, msg in field_value_problems(lines, header_at, h, params,
+                                                 m.group(1).split()[0].lower()):
+            add("WARN", line_no, f"{name}: {msg}")
         # Sections start after the banner that closes the header, so the
         # procedure title is never read as a section.
         # Without UPDATED the header block ends where its comment lines do.
@@ -540,6 +723,19 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
             banners_from = first
         for line_no, msg in banner_problems(lines, banners_from, end):
             add("WARN", line_no, f"{name}: {msg}")
+        if documented_header:
+            for line_no, msg in section_spacing_problems(lines, banners_from, end):
+                add("WARN", line_no, f"{name}: {msg}")
+            # Blank lines around the header (SKILL.md section 6): one after a
+            # one-line signature, none after a multi-line one, one before End.
+            want = 0 if k > i else 1
+            if header_at - k - 1 != want:
+                add("WARN", sig_line, f"{name}: {header_at - k - 1} blank lines after "
+                                      f"the signature, expected {want}")
+            blanks, above = blanks_above(lines, end)
+            if end < len(lines) and above >= h and blanks != 1:
+                add("WARN", end + 1, f"{name}: {blanks} blank lines before "
+                                     f"{lines[end].strip()}, expected 1")
         for line_no, msg in indent_problems(lines, first, end):
             add("WARN", line_no, f"{name}: {msg}")
         if not compact and body > TRIVIAL_MAX:
@@ -554,7 +750,29 @@ def check(path: Path, max_line: int) -> list[tuple[str, int, str]]:
                     stop = sections[pos + 1][1] if pos + 1 < len(sections) else end
                     for line_no, msg in alignment_problems(lines, at, stop):
                         add("WARN", line_no, f"{name}: {msg}")
+        procs.append((i, end))
+        if documented_header:
+            documented.add(i)
         i = end + 1
+    # Group banner blocks (SKILL.md section 6): one blank line after the
+    # previous End, two after the declarations, one before the signature.
+    groups_from = header_end + 1 if top is not None else start
+    for first_line, last_line in group_banner_blocks(lines, groups_from, len(lines), procs):
+        blanks, above = blanks_above(lines, first_line)
+        if above >= 0 and END_RE.match(lines[above]):
+            if blanks != 1:
+                add("WARN", first_line + 1, f"group banner: {blanks} blank lines after "
+                                            "previous End, expected 1")
+        elif top is not None and above > header_end and blanks != 2:
+            add("WARN", first_line + 1, f"group banner: {blanks} blank lines after "
+                                        "the declarations, expected 2")
+        below = last_line + 1
+        while below < len(lines) and lines[below].strip() == "":
+            below += 1
+        sig = PROC_RE.match(lines[below]) if below < len(lines) else None
+        if sig and below in documented and below - last_line - 1 != 1:
+            add("WARN", below + 1, f"{sig.group(2)}: {below - last_line - 1} blank lines "
+                                   "after the group banner, expected 1")
     out += statement_findings(lines, start)
     return out
 
